@@ -1,7 +1,8 @@
 import { categoryName, groupName, locale, t } from './preferences.mjs';
-import { accountTypes, balances, categories, dateLabel, newest, providers, rupiah, totals, types, validLogo } from './ledger.mjs';
+import { accountTypes, balances, categories, categoryReviewFilter, dateLabel, newest, obligationProgress, providers, rupiah, today, totals, types, validLogo } from './ledger.mjs';
 
 const paths = {
+  bills: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6m-6 4h6m-6 4h3',
   appearance: 'M3 4h18v13H3z M8 21h8m-4-4v4',
   dashboard: 'M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z',
   transactions: 'M3 7h17m-4-4 4 4-4 4M21 17H4m4-4-4 4 4 4',
@@ -46,9 +47,10 @@ export function table(state, list, limit = 0) {
   return `<div class="table-scroll"><table><thead><tr><th>${t('Transaksi')}</th><th class="tx-desktop-meta">${t('Kategori')}</th><th class="tx-desktop-meta">${t('Rekening')}</th><th>${t('Nominal')}</th><th><span class="sr">${t('Aksi')}</span></th></tr></thead><tbody>${shown.map(tx => {
     const category = categoryMap.get(tx.category);
     const account = accountMap.get(tx.account);
+    const reviewLabel = tx.needsCategory ? t('Perlu kategori') : '';
     const accountLabel = esc(account?.name) + (tx.type === 'transfer' ? ' → ' + esc(accountMap.get(tx.to)?.name) : '');
     const label = tx.note || (category ? categoryName(category) : '') || (tx.salary && tx.type === 'income' ? t('Gaji') : t(types[tx.type]));
-    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><i style="--dot:${category.group.color}"></i>${esc(categoryName(category))}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t('Edit {name}', { name: label }))}">${icon('edit', 16)}</button></td></tr>`;
+    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${reviewLabel ? ' · ' + reviewLabel : category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><i style="--dot:${category.group.color}"></i>${esc(categoryName(category))}</span>` : reviewLabel ? `<span class="category-review">${reviewLabel}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t('Edit {name}', { name: label }))}">${icon('edit', 16)}</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -104,12 +106,16 @@ function flowChart(state, list, month, view) {
 function expenses(state, list, selectedGroup) {
   const sums = new Map();
   for (const tx of list) {
-    if (tx.type === 'expense') sums.set(tx.category, (sums.get(tx.category) || 0) + tx.amount);
+    if (tx.type !== 'expense') continue;
+    const key = tx.needsCategory ? categoryReviewFilter : tx.category;
+    sums.set(key, (sums.get(key) || 0) + tx.amount);
   }
-  const items = categories(state).map(item => ({
-    ...item, value: sums.get(item.id) || 0,
-  })).filter(item => item.value && (!selectedGroup || item.group.id === selectedGroup))
-    .sort((left, right) => right.value - left.value);
+  const items = categories(state).filter(item => sums.has(item.id) && (!selectedGroup || item.group.id === selectedGroup))
+    .map(item => ({ id: item.id, label: categoryName(item), value: sums.get(item.id) }));
+  if (!selectedGroup && sums.has(categoryReviewFilter)) {
+    items.push({ id: categoryReviewFilter, label: t('Perlu kategori'), value: sums.get(categoryReviewFilter) });
+  }
+  items.sort((left, right) => right.value - left.value);
   const subtotal = items.reduce((sum, item) => sum + item.value, 0);
   const groups = state.groups.filter(group => !group.archived || group.id === selectedGroup ||
     group.categories.some(category => sums.has(category.id)));
@@ -120,7 +126,7 @@ function expenses(state, list, selectedGroup) {
     <div class="breakdown-list">${items.length ? items.map(item => {
       const share = item.value / subtotal * 100;
       return `<button data-action="category-transactions" data-id="${item.id}">
-        <span class="breakdown-row"><span><i></i>${esc(categoryName(item))}</span><strong>${rupiah(item.value)}</strong></span>
+        <span class="breakdown-row"><span><i></i>${esc(item.label)}</span><strong>${rupiah(item.value)}</strong></span>
         <span class="category-meter" aria-hidden="true"><i style="--share:${share}%"></i></span>
       </button>`;
     }).join('') : `<p class="muted">${t('Belum ada pengeluaran.')}</p>`}</div>
@@ -167,4 +173,50 @@ export function categoriesPage(state, selectedGroup, manageGroups) {
       <div class="category-rows">${state.groups.map(group => `<button data-action="edit-group" data-id="${group.id}">
         <span><i class="dot" style="--dot:${group.color}"></i>${esc(groupName(group))} ${group.archived ? `<small>${t('Diarsipkan')}</small>` : ''}</span>${icon('edit', 16)}</button>`).join('')}</div>
       <button class="secondary small" data-action="add-group">＋ ${t('Tambah kelompok')}</button></div></details>`;
+}
+
+export function obligationsPage(state) {
+  const asOf = today();
+  const payments = new Map();
+  for (const tx of state.transactions) {
+    if (!tx.obligation) continue;
+    if (!payments.has(tx.obligation)) payments.set(tx.obligation, []);
+    payments.get(tx.obligation).push(tx);
+  }
+  const plans = (state.obligations || []).map(item => {
+    const history = payments.get(item.id) || [];
+    return { item, history, progress: obligationProgress(item, history) };
+  }).sort((left, right) => (left.progress.due || '9999-99').localeCompare(right.progress.due || '9999-99') ||
+    left.item.name.localeCompare(right.item.name, locale()));
+  const card = ({ item, history, progress }) => {
+    const loan = item.kind === 'loan';
+    const settled = loan && progress.remaining === 0;
+    const late = !item.archived && progress.due && progress.due < asOf;
+    const latest = history.reduce((last, tx) => !last || newest(tx, last) < 0 ? tx : last, null);
+    const status = item.archived ? 'Diarsipkan' : settled ? 'Lunas' : late ? 'Lewat jatuh tempo' :
+      progress.due === asOf ? 'Jatuh tempo hari ini' : '';
+    return `<article class="card obligation-card">
+      <div class="card-head"><div><p>${t(loan ? 'Pinjaman' : 'Tagihan bulanan')}</p><h2>${esc(item.name)}</h2></div>
+      <button class="icon-button" data-action="edit-obligation" data-id="${item.id}" aria-label="${esc(t('Edit {name}', { name: item.name }))}">${icon('edit')}</button></div>
+      <dl class="obligation-figures">
+        <div><dt>${t(loan ? 'Sisa pinjaman' : 'Nominal per bulan')}</dt><dd>${rupiah(loan ? progress.remaining : item.amount)}</dd></div>
+        ${progress.due && !item.archived ? `<div><dt>${t('Jatuh tempo berikutnya')}</dt><dd class="obligation-date">${dateLabel(progress.due, { day: 'numeric', month: 'short', year: 'numeric' }, locale())}</dd></div>` : ''}
+      </dl>
+      ${status ? `<span class="obligation-status ${late ? 'overdue' : ''}">${t(status)}</span>` : ''}
+      ${loan && !settled && !item.archived && progress.amount !== item.amount ? `<p class="muted">${t('Sisa cicilan ini {amount}', { amount: rupiah(progress.amount) })}</p>` : ''}
+      ${latest ? `<p class="muted">${t('Terakhir dibayar {amount} · {date}', { amount: rupiah(latest.amount), date: dateLabel(latest.date, undefined, locale()) })}</p>` : ''}
+      <div class="inline">
+        ${!item.archived && !settled && (loan || progress.due) ? `<button class="secondary" data-action="pay-obligation" data-id="${item.id}">${t('Catat pembayaran')}</button>` : ''}
+        ${history.length ? `<button class="text-button" data-action="obligation-history" data-id="${item.id}">${t('Riwayat pembayaran')} ${icon('arrow', 14)}</button>` : ''}
+      </div>
+    </article>`;
+  };
+  const active = plans.filter(plan => !plan.item.archived);
+  const archived = plans.filter(plan => plan.item.archived);
+  return `<div class="page-intro"><div><h1>${t('Pinjaman & Tagihan')}</h1><p>${t('Pantau cicilan, tagihan bulanan, dan tanggal jatuh tempo.')}</p></div>
+    <button class="primary" data-action="add-obligation">＋ ${t('Tambah jadwal')}</button></div>
+    ${active.length ? `<div class="obligations-grid">${active.map(card).join('')}</div>` :
+      `<section class="card">${empty('Belum ada jadwal aktif', 'Tambahkan pinjaman atau tagihan bulanan untuk mulai mencatat.', null, null, 'bills')}</section>`}
+    ${archived.length ? `<details class="card group-manager"><summary>${t('Jadwal diarsipkan')}</summary>
+      <div class="group-controls obligations-grid">${archived.map(card).join('')}</div></details>` : ''}`;
 }

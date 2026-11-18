@@ -21,7 +21,7 @@ export function rows(state, list) {
     ...[...list].sort(newest).map(tx => {
       const category = names.get(tx.category);
       return [tx.date, types[tx.type], tx.amount, accounts.get(tx.account)?.name || '', accounts.get(tx.to)?.name || '',
-        category?.group.name || '', category?.name || '', tx.salary ? 'Ya' : '', tx.note];
+        category?.group.name || '', category?.name || (tx.needsCategory ? 'Perlu kategori' : ''), tx.salary ? 'Ya' : '', tx.note];
     })];
 }
 export function csv(state, list) {

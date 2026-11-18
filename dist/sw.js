@@ -1,4 +1,4 @@
-const cacheName = 'arus-shell-v7';
+const cacheName = 'arus-shell-v9';
 const assets = ['./', './index.html', './styles.css', './app.mjs', './ledger.mjs', './storage.mjs', './exports.mjs',
   './views.mjs', './theme.js', './preferences.mjs', './translations.mjs', './forms.mjs', './drive.mjs', './config.mjs', './manifest.webmanifest', './icon.png', './icon-192.png',
   ...['bca', 'mandiri', 'bri', 'bni', 'bsi', 'jago', 'gopay', 'ovo', 'dana', 'shopeepay', 'linkaja'].map(name => './assets/' + name + '.svg')];

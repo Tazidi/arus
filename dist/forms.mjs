@@ -1,6 +1,6 @@
 import { categoryName, groupName, locale, t } from './preferences.mjs';
-import { accountTypes, categories, formatAmount, id, palettes, parseAmount, providers, today, types, validLogo } from './ledger.mjs';
-import { esc, logo, option } from './views.mjs';
+import { accountTypes, categories, formatAmount, id, palettes, parseAmount, providers, recordObligationPayment, today, types, validLogo } from './ledger.mjs';
+import { esc, logo, monthLabel, option } from './views.mjs';
 
 const $ = selector => document.querySelector(selector);
 export const dialog = $('#dialog');
@@ -58,18 +58,30 @@ export function transactionForm(state, tx, commit) {
   const accounts = state.accounts.map(item => option(item.id, item.name, tx?.account)).join('');
   modal(tx ? t('Edit transaksi') : t('Tambah transaksi'), `<div class="form-grid">${select('type', 'Jenis', typeOptions)}
     ${amountField('amount', 'Nominal (Rp)', tx?.amount)}
-    <label>${t('Tanggal')}<input type="date" name="date" value="${tx?.date || today()}" required></label>
+    <label>${t('Tanggal')}<input type="date" name="date" value="${tx?.date || today()}" ${tx?.obligation ? `max="${today()}"` : ''} required></label>
     ${select('account', 'Rekening', accounts)}<div id="transaction-fields" class="wide"></div>
+    ${tx?.needsCategory ? `<p class="wide muted">${t('Pilih kategori untuk menyelesaikan peninjauan.')}</p>` : ''}
     <div class="wide">${input('note', 'Catatan (opsional)', tx?.note, 160, false)}</div></div>`, async data => {
-    const type = data.get('type');
-    const next = { id: tx?.id || id(), date: data.get('date'), amount: parseAmount(data.get('amount')),
+    const type = tx?.obligation || tx?.needsCategory ? 'expense' : data.get('type');
+    const next = { ...tx, id: tx?.id || id(), date: data.get('date'), amount: parseAmount(data.get('amount')),
       account: data.get('account'), type, category: type === 'expense' ? data.get('category') : '',
       to: type === 'transfer' ? data.get('to') : '', salary: data.has('salary'),
       note: data.get('note').trim(), created: tx?.created || new Date().toISOString() };
-    await commit(draft => upsert(draft.transactions, next), 'Transaksi disimpan.');
+    delete next.needsCategory;
+    await commit(draft => {
+      if (tx?.obligation) {
+        const plan = draft.obligations.find(item => item.id === tx.obligation);
+        const otherPayments = draft.transactions.filter(item => item.obligation === tx.obligation && item.id !== tx.id);
+        if (plan?.kind === 'loan' && next.amount + otherPayments.reduce((sum, item) => sum + item.amount, 0) > plan.balance) {
+          throw new Error('Pembayaran melebihi sisa pinjaman.');
+        }
+      }
+      upsert(draft.transactions, next);
+    }, 'Transaksi disimpan.');
   }, undefined, tx ? `<button type="button" class="danger" data-action="remove-transaction" data-id="${tx.id}">${t('Hapus')}</button>` : '');
   const fields = $('#transaction-fields');
   const type = field('type');
+  type.disabled = !!(tx?.obligation || tx?.needsCategory);
   const account = field('account');
   let selectedCategory = tx?.category;
   let target = tx?.to;
@@ -236,5 +248,69 @@ export function categoryForm(state, group, category, commit, selectedGroup = '')
       if (previous && previous !== destination) previous.categories = previous.categories.filter(item => item.id !== value.id);
       upsert(destination.categories, value);
     }, 'Kategori disimpan.');
+  });
+}
+
+export function obligationForm(item, commit) {
+  const kinds = option('bill', t('Tagihan bulanan'), item?.kind) + option('loan', t('Pinjaman'), item?.kind);
+  modal(t(item ? 'Edit jadwal' : 'Tambah jadwal'), `<div class="form-grid">
+    ${item ? '' : select('kind', 'Jenis jadwal', kinds)}
+    ${input('name', 'Nama tagihan atau pinjaman', item?.name)}
+    ${amountField('amount', 'Nominal per bulan (Rp)', item?.amount)}
+    <label>${t('Jatuh tempo pertama')}<input type="date" name="firstDue" value="${item?.firstDue || today()}" required></label>
+    <div id="loan-balance" class="wide">
+      ${amountField('balance', 'Saldo pinjaman saat mulai dicatat (Rp)', item?.balance)}
+      <p class="muted">${t('Masukkan jumlah yang masih harus dibayar, termasuk biaya yang sudah diketahui.')}</p>
+    </div>
+    ${item ? `<div class="wide">${check('archived', 'Arsipkan jadwal', item.archived)}</div>` : ''}</div>`, async data => {
+    const kind = item?.kind || data.get('kind');
+    const next = {
+      id: item?.id || id(), kind, name: data.get('name').trim(),
+      firstDue: data.get('firstDue'), amount: parseAmount(data.get('amount')),
+      archived: data.has('archived'),
+      ...(kind === 'loan' && { balance: parseAmount(data.get('balance')) }),
+    };
+    await commit(draft => {
+      const payments = draft.transactions.filter(tx => tx.obligation === next.id);
+      if (kind === 'loan' && payments.reduce((sum, tx) => sum + tx.amount, 0) > next.balance) {
+        throw new Error('Saldo awal pinjaman lebih kecil dari pembayaran yang sudah dicatat.');
+      }
+      if (kind === 'bill' && payments.some(tx => tx.dueMonth < next.firstDue.slice(0, 7))) {
+        throw new Error('Jatuh tempo pertama melewati periode yang sudah dibayar.');
+      }
+      upsert(draft.obligations ??= [], next);
+    }, 'Jadwal disimpan.');
+  });
+  const update = () => {
+    const loan = (item?.kind || field('kind')?.value) === 'loan';
+    $('#loan-balance').hidden = !loan;
+    field('balance').disabled = !loan;
+  };
+  field('kind')?.addEventListener('change', update);
+  update();
+}
+
+export function obligationPaymentForm(state, item, progress, commit) {
+  const dueMonth = item.kind === 'bill' ? progress.due.slice(0, 7) : undefined;
+  const available = categories(state).filter(category => !category.archived && !category.group.archived)
+    .sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale()));
+  const accountOptions = option('', t('Pilih rekening')) + state.accounts.map(account => option(account.id, account.name)).join('');
+  const defaultCategory = available.find(category => category.id === 'bills')?.id;
+  const categoryOptions = option('', t('Pilih kategori')) + available
+    .map(category => option(category.id, categoryName(category), defaultCategory)).join('');
+  modal(t('Catat pembayaran'), `<p class="muted">${esc(item.name)}${dueMonth ? ' · ' + monthLabel(dueMonth) : ''}</p>
+    <div class="form-grid">
+      ${amountField('amount', 'Nominal (Rp)', progress.amount)}
+      <label>${t('Tanggal pembayaran')}<input type="date" name="date" value="${today()}" max="${today()}" required></label>
+      ${select('account', 'Rekening', accountOptions)}
+      ${select('category', 'Kategori pengeluaran', categoryOptions)}
+      <div class="wide">${check('salary', 'Pengeluaran ini dari gaji', false)}</div>
+    </div>`, async data => {
+    const payment = {
+      id: id(), date: data.get('date'), amount: parseAmount(data.get('amount')),
+      account: data.get('account'), category: data.get('category'),
+      salary: data.has('salary'), note: item.name, created: new Date().toISOString(),
+    };
+    await commit(draft => recordObligationPayment(draft, item.id, dueMonth, payment), 'Pembayaran dicatat.');
   });
 }

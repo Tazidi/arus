@@ -121,7 +121,7 @@ export function logout(expectedId) {
   });
 }
 
-const collections = ['accounts', 'groups', 'transactions'];
+export const collections = ['accounts', 'groups', 'transactions', 'obligations'];
 function canonical(value) {
   if (!value || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
@@ -132,9 +132,9 @@ export const hasChanges = record => !same(record.state, record.base);
 export function merge(base, local, remote, preferLocal = false) {
   const merged = {};
   for (const collection of collections) {
-    const before = new Map(base[collection].map(item => [item.id, item]));
-    const here = new Map(local[collection].map(item => [item.id, item]));
-    const there = new Map(remote[collection].map(item => [item.id, item]));
+    const before = new Map((base[collection] ?? []).map(item => [item.id, item]));
+    const here = new Map((local[collection] ?? []).map(item => [item.id, item]));
+    const there = new Map((remote[collection] ?? []).map(item => [item.id, item]));
     for (const key of new Set([...before.keys(), ...here.keys()])) {
       const original = before.get(key);
       const next = here.get(key);

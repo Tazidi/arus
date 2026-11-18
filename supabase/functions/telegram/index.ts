@@ -7,7 +7,7 @@ const origins = (Deno.env.get('ARUS_ORIGINS') || '').split(',').map(value => val
 
 type Account = { id: string; name: string; provider?: string; customProvider?: string; type: string; opening: number; savings?: boolean };
 type Category = { id: string; name: string; archived?: boolean };
-type Group = { archived?: boolean; categories: Category[] };
+type Group = { name?: string; archived?: boolean; categories: Category[] };
 type Transaction = { type: 'income' | 'expense' | 'transfer'; date: string; amount: number; account: string;
   to?: string; salary?: boolean };
 type Ledger = { state: { accounts: Account[]; groups: Group[]; transactions: Transaction[] } };
@@ -81,30 +81,31 @@ function expenseDetails(input: string, state: Ledger['state']) {
   const categories = activeCategories(state);
   const middle = middleAmount.exec(input);
   const trailing = trailingAmount.exec(input);
-  const candidates: { category: string; account: string; amount: string }[] = [];
-  if (middle) candidates.push({ category: middle[1], account: middle[3], amount: middle[2] });
+  const candidates: { note: string; account: string; amount: string }[] = [];
+  if (middle) candidates.push({ note: middle[1], account: middle[3], amount: middle[2] });
   if (trailing) {
-    for (const name of new Set(categories.map(category => normalize(category.name)))) {
-      if (trailing[1].startsWith(name + ' ')) {
-        candidates.push({ category: name, account: trailing[1].slice(name.length + 1), amount: trailing[2] });
+    for (let split = trailing[1].indexOf(' '); split >= 0; split = trailing[1].indexOf(' ', split + 1)) {
+      if (split <= 80 && trailing[1].length - split - 1 <= 80) {
+        candidates.push({ note: trailing[1].slice(0, split), account: trailing[1].slice(split + 1), amount: trailing[2] });
       }
     }
   }
-
-  const matches = new Map<string, { category: Category; account: Account; amount: number }>();
+  const matches = new Map<string, Omit<Details, 'type'>>();
   for (const candidate of candidates) {
     const amount = parseAmount(candidate.amount);
     const account = findAccount(candidate.account, state.accounts);
-    const matchingCategories = categories.filter(category => normalize(category.name) === candidate.category);
-    if (!amount || !account || matchingCategories.length !== 1) continue;
-    const [category] = matchingCategories;
-    matches.set(JSON.stringify([account.id, category.id, amount]), { category, account, amount });
+    if (!amount || !account) continue;
+    const matching = categories.filter(category => normalize(category.name) === normalize(candidate.note));
+    const category = matching.length === 1 ? matching[0] : undefined;
+    matches.set(JSON.stringify([account.id, normalize(candidate.note), amount]), { category, account, amount, note: candidate.note });
   }
-  return matches.size === 1 ? matches.values().next().value : undefined;
+  const resolved = [...matches.values()].filter(match => match.category);
+  if (resolved.length) return resolved.length === 1 ? resolved[0] : undefined;
+  if (matches.size === 1) return matches.values().next().value;
 }
 
-type Details = { type: Transaction['type']; account: Account; amount: number; category?: Category; to?: Account; salary?: boolean };
-function transactionDetails(input: string, state: Ledger['state']): Details | undefined {
+type Details = { type: Transaction['type']; account: Account; amount: number; category?: Category; note?: string; to?: Account; salary?: boolean };
+function transactionDetails(input: string, state: Ledger['state'], original: string): Details | undefined {
   const income = /^(pemasukan|gaji) (.+)$/u.exec(input);
   if (income) {
     const end = shortAmount.exec(income[2]);
@@ -129,7 +130,7 @@ function transactionDetails(input: string, state: Ledger['state']): Details | un
     return;
   }
   const salary = input.endsWith(' dari gaji');
-  const expense = expenseDetails(salary ? input.slice(0, -' dari gaji'.length) : input, state);
+  const expense = expenseDetails(salary ? original.slice(0, -' dari gaji'.length) : original, state);
   if (expense) return { ...expense, type: 'expense', salary };
 }
 
@@ -180,19 +181,56 @@ function monthReport(state: Ledger['state'], today: string) {
     'Arus kas bersih ' + money.format(income - expenses), 'Sisa gaji ' + money.format(salary - spentFromSalary)].join('\n');
 }
 
+type CategoryOption = { id: string; label: string };
+const categoryPageSize = 8;
+const pendingButtons = (updateId: string) => [
+  [{ text: 'Simpan untuk ditinjau', callback_data: 'review:' + updateId }],
+  [{ text: 'Batal', callback_data: 'cancel:' + updateId }],
+];
+
 async function handleCallback(query: Callback) {
   if (query.message?.chat.type !== 'private') return;
-  const action = /^(save|cancel):(\d{1,20})$/.exec(query.data || '');
+  const action = /^(save|cancel|review|categories|category):([0-9]{1,20})(?::([0-9]{1,8}))?$/.exec(query.data || '');
   if (!action) return;
+  const [, kind, updateId, argument] = action;
+  if ((kind === 'categories' || kind === 'category') !== (argument !== undefined)) return;
   const chat = String(query.message.chat.id);
-  const outcome = await rpc<'saved' | 'unlinked' | 'expired' | 'invalid' | 'cancelled'>('arus_confirm_telegram', {
-    input_chat: chat, input_update: action[2], should_save: action[1] === 'save',
+  const respond = (text?: string) => send('answerCallbackQuery', { callback_query_id: query.id, text }).catch(() => {});
+  if (kind === 'categories') {
+    const [draft] = await rest<{ transaction_data: { categoryOptions?: CategoryOption[] } }[]>(
+      'telegram_drafts?chat_id=' + equals(chat) + '&update_id=' + equals(updateId) + '&expires_at=gt.' +
+      encodeURIComponent(new Date().toISOString()) + '&select=transaction_data');
+    const options = draft?.transaction_data.categoryOptions;
+    if (!options?.length) return respond('Daftar kategori sudah tidak tersedia.');
+    const page = Number(argument);
+    const start = page * categoryPageSize;
+    if (start >= options.length) return respond('Halaman kategori tidak tersedia.');
+    const keyboard = options.slice(start, start + categoryPageSize).map((item, index) => [
+      { text: 'Simpan: ' + item.label, callback_data: 'category:' + updateId + ':' + (start + index) },
+    ]);
+    const pages = [];
+    if (page > 0) pages.push({ text: '‹ Sebelumnya', callback_data: 'categories:' + updateId + ':' + (page - 1) });
+    if (start + categoryPageSize < options.length) pages.push({ text: 'Berikutnya ›', callback_data: 'categories:' + updateId + ':' + (page + 1) });
+    if (pages.length) keyboard.push(pages);
+    keyboard.push(...pendingButtons(updateId));
+    await respond();
+    await send('editMessageReplyMarkup', { chat_id: chat, message_id: query.message.message_id,
+      reply_markup: { inline_keyboard: keyboard } }).catch(() => {});
+    return;
+  }
+  const outcome = await rpc<'saved' | 'saved_review' | 'category_changed' | 'unlinked' | 'expired' | 'invalid' | 'cancelled'>('arus_confirm_telegram_v2', {
+    input_chat: chat, input_update: updateId, should_save: kind !== 'cancel',
+    category_index: kind === 'category' ? Number(argument) : null,
   });
-  const label = { saved: 'Transaksi tersimpan di Arus.', unlinked: 'Hubungkan bot melalui pengaturan Arus.',
+  const label = { saved: 'Transaksi tersimpan di Arus.', saved_review: 'Tersimpan. Pilih kategorinya di Arus → Transaksi → Perlu kategori.',
+    category_changed: 'Kategori sudah berubah. Pilih kategori lain atau simpan untuk ditinjau.',
+    unlinked: 'Hubungkan bot melalui pengaturan Arus.',
     expired: 'Pratinjau sudah kedaluwarsa. Kirim transaksi lagi.', invalid: 'Rekening atau kategori berubah. Kirim transaksi lagi.',
     cancelled: 'Pencatatan dibatalkan.' }[outcome];
-  await send('answerCallbackQuery', { callback_query_id: query.id, text: label }).catch(() => {});
-  await send('editMessageText', { chat_id: chat, message_id: query.message.message_id, text: label }).catch(() => {});
+  await respond(label);
+  if (outcome !== 'category_changed') {
+    await send('editMessageText', { chat_id: chat, message_id: query.message.message_id, text: label }).catch(() => {});
+  }
 }
 async function handleUpdate(update: Update) {
   if (update.callback_query) return handleCallback(update.callback_query);
@@ -226,25 +264,36 @@ async function handleUpdate(update: Update) {
   if (guide) return say(chat, guideTitle(guide) + '\n\n' + guides[guide] + '\n\nRekening: ' + names(state.accounts) +
     (guide === 'pengeluaran' ? '\nKategori: ' + names(activeCategories(state)) : ''),
     { reply_markup: { force_reply: true, input_field_placeholder: 'Masukkan detail transaksi' } });
-  const details = transactionDetails(guidedInput(input, message.reply_to_message), state);
+  const details = transactionDetails(guidedInput(input, message.reply_to_message), state, text.replace(/\s+/g, ' '));
   if (!details) {
     await say(chat, 'Transaksi belum dikenali. Pilih tombol sesuai jenis transaksi untuk melihat format dan nama rekening.', menu);
     return;
   }
-  const { type, account, category, to, amount, salary } = details;
+  const { type, account, category, to, amount, note, salary } = details;
   const updateId = String(update.update_id);
   const label = type === 'income' && salary ? 'Gaji' : labels[type];
+  const needsCategory = type === 'expense' && !category;
+  const categoryOptions = needsCategory ? state.groups.filter(group => !group.archived).flatMap(group =>
+    group.categories.filter(item => !item.archived)
+      .map(item => ({ id: item.id, label: (group.name ? item.name + ' · ' + group.name : item.name).slice(0, 80) })))
+    .sort((left, right) => left.label.localeCompare(right.label, 'id')) : [];
   const next = { id: 'telegram-' + updateId, type, account: account.id, category: category?.id || '', amount,
-    date: nowDate(), created: new Date().toISOString(), to: to?.id || '', note: category?.name || label, salary: !!salary };
+    date: nowDate(), created: new Date().toISOString(), to: to?.id || '', note: note || label, salary: !!salary,
+    ...(needsCategory && { needsCategory: true, categoryOptions }) };
   await rest('telegram_drafts?chat_id=' + equals(chat) + '&expires_at=lt.' + encodeURIComponent(next.created), { method: 'DELETE' });
   await rest('telegram_drafts', {
     method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
     body: JSON.stringify({ chat_id: chat, update_id: updateId, transaction_data: next }),
   });
   const preview = [label + ' · ' + money.format(amount), to ? account.name + ' → ' + to.name : 'Rekening: ' + account.name];
-  if (category) preview.push('Kategori: ' + category.name + (salary ? ' · Dari gaji' : ''));
+  if (category) preview.push('Kategori: ' + category.name);
+  if (needsCategory) preview.push('Catatan: ' + note, 'Kategori belum dikenali.');
+  if (salary && type === 'expense') preview.push('Dari gaji');
+  const keyboard = needsCategory ? pendingButtons(updateId) :
+    [[{ text: 'Simpan', callback_data: 'save:' + updateId }, { text: 'Batal', callback_data: 'cancel:' + updateId }]];
+  if (categoryOptions.length) keyboard.unshift([{ text: 'Pilih kategori', callback_data: 'categories:' + updateId + ':0' }]);
   await say(chat, preview.join('\n'), {
-    reply_markup: { inline_keyboard: [[{ text: 'Simpan', callback_data: 'save:' + updateId }, { text: 'Batal', callback_data: 'cancel:' + updateId }]] },
+    reply_markup: { inline_keyboard: keyboard },
   });
 }
 

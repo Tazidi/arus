@@ -1,15 +1,15 @@
 import { categoryName, groupName, language, locale, setPreference, t, theme } from './preferences.mjs';
 import { config } from './config.mjs';
-import { categories, initial, today, types, validate } from './ledger.mjs';
-import { cloudReady, currentSession, finishLogin, hasChanges, load, login, logout, merge, requireAccount, save, sync, telegram } from './storage.mjs';
+import { categories, categoryReviewFilter, initial, obligationProgress, today, types, validate } from './ledger.mjs';
+import { cloudReady, collections, currentSession, finishLogin, hasChanges, load, login, logout, merge, requireAccount, save, sync, telegram } from './storage.mjs';
 import { backup, csv, download, parseBackup, xlsx } from './exports.mjs';
-import { accountsPage, categoriesPage, dashboard, esc, icon, monthLabel, option, periodControl, table } from './views.mjs';
-import { accountForm, categoryForm, dialog, groupForm, modal, transactionForm } from './forms.mjs';
+import { accountsPage, categoriesPage, dashboard, esc, icon, monthLabel, obligationsPage, option, periodControl, table } from './views.mjs';
+import { accountForm, categoryForm, dialog, groupForm, modal, obligationForm, obligationPaymentForm, transactionForm } from './forms.mjs';
 import { createDriveActions } from './drive.mjs';
 
 const $ = selector => document.querySelector(selector);
 const pages = { ringkasan: ['Ringkasan', 'dashboard'], transaksi: ['Transaksi', 'transactions'],
-  rekening: ['Rekening', 'accounts'], kategori: ['Kategori', 'categories'], pengaturan: ['Pengaturan', 'settings'] };
+  rekening: ['Rekening', 'accounts'], kategori: ['Kategori', 'categories'], tagihan: ['Tagihan', 'bills'], pengaturan: ['Pengaturan', 'settings'] };
 const chart = { monthly: false, income: true, expense: true, group: '' };
 let filters = {};
 let categoryGroup = '';
@@ -117,25 +117,29 @@ function transactions() {
     (!filters.type || (filters.type === 'salary' ? tx.salary && tx.type !== 'transfer'
       : filters.type === 'cashflow' ? tx.type !== 'transfer' : filters.type === tx.type)) &&
     (!filters.account || tx.account === filters.account || tx.to === filters.account) &&
-    (!filters.category || tx.category === filters.category) &&
+    (!filters.category || (filters.category === categoryReviewFilter ? tx.needsCategory : tx.category === filters.category)) &&
+    (!filters.obligation || tx.obligation === filters.obligation) &&
     (!filters.start || (+tx.date.slice(-2) >= filters.start && +tx.date.slice(-2) <= filters.end)) &&
     (!search || [tx.note, accountNames.get(tx.account), accountNames.get(tx.to), categoryNames.get(tx.category), tx.amount].join(' ').toLocaleLowerCase(locale()).includes(search)));
 }
 function transactionPage() {
+  const plan = lookup(state.obligations || [], filters.obligation);
+  const reviewCount = state.transactions.filter(tx => tx.needsCategory).length;
   return `<div class="page-intro"><div><h1>${t('Transaksi')}</h1><p>${t('Lihat riwayat pemasukan, pengeluaran, dan transfer.')}</p></div>${periodControl(month, true, filters.all)}</div>
     <section class="card"><div class="filters">
     <label>${t('Cari')}<input id="query" type="search" placeholder="${t('Catatan, rekening, nominal…')}" value="${esc(filters.query)}"></label>
     <label>${t('Jenis')}<select id="type-filter">${option('', t('Semua jenis'), filters.type)}${option('cashflow', t('Pemasukan dan pengeluaran'), filters.type)}${Object.entries(types).map(([key, label]) => option(key, t(label), filters.type)).join('')}${option('salary', t('Gaji dan dari gaji'), filters.type)}</select></label>
     <label>${t('Rekening')}<select id="account-filter">${option('', t('Semua rekening'), filters.account)}${state.accounts.map(account => option(account.id, account.name, filters.account)).join('')}</select></label>
-    <label>${t('Kategori')}<select id="category-filter">${option('', t('Semua kategori'), filters.category)}${categories(state).sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale())).map(item => option(item.id, categoryName(item), filters.category)).join('')}</select></label>
-    ${filters.start ? `<button class="secondary small" data-action="clear-range">${t('Tanggal {range}', { range: filters.start + '–' + filters.end })} ×</button>` : ''}</div>
-    <div class="list-toolbar"><div class="inline"><span id="result-count" role="status"></span><button class="text-button small" data-action="clear-filters" hidden>${t('Bersihkan filter')}</button></div><div class="inline"><button class="secondary small" data-action="csv">${icon('download', 15)} CSV</button><button class="secondary small" data-action="xlsx">${icon('download', 15)} Excel</button></div></div>
+    <label>${t('Kategori')}<select id="category-filter">${option('', t('Semua kategori'), filters.category)}${option(categoryReviewFilter, t('Perlu kategori'), filters.category)}${categories(state).sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale())).map(item => option(item.id, categoryName(item), filters.category)).join('')}</select></label>
+    ${filters.start ? `<button class="secondary small" data-action="clear-range">${t('Tanggal {range}', { range: filters.start + '–' + filters.end })} ×</button>` : ''}
+    ${plan ? `<button class="secondary small" data-action="clear-obligation">${esc(plan.name)} ×</button>` : ''}</div>
+    <div class="list-toolbar"><div class="inline"><span id="result-count" role="status"></span>${reviewCount ? `<button class="secondary small" data-action="review-categories">${t('Perlu kategori')} · ${reviewCount}</button>` : ''}<button class="text-button small" data-action="clear-filters" hidden>${t('Bersihkan filter')}</button></div><div class="inline"><button class="secondary small" data-action="csv">${icon('download', 15)} CSV</button><button class="secondary small" data-action="xlsx">${icon('download', 15)} Excel</button></div></div>
     <div id="transaction-results"></div></section>`;
 }
 function renderResults() {
   const list = transactions();
   $('#result-count').textContent = t(list.length === 1 ? '1 transaksi' : '{count} transaksi', { count: list.length });
-  $('[data-action="clear-filters"]').hidden = !['query', 'type', 'account', 'category', 'start'].some(key => filters[key]);
+  $('[data-action="clear-filters"]').hidden = !['query', 'type', 'account', 'category', 'start', 'obligation'].some(key => filters[key]);
   $('#transaction-results').innerHTML = table(state, list);
 }
 function integrationCard(title, body, actions, symbol) {
@@ -199,7 +203,8 @@ function render() {
   $('#breadcrumb').innerHTML = `<span>Arus</span><i>/</i><strong>${t(pages[currentPage][0])}</strong>`;
   $('#profile').innerHTML = `<span class="avatar">${esc((session.user.email || 'P').slice(0, 1).toUpperCase())}</span><span><strong>${t('Akun saya')}</strong><small>${t('Akun Google')}</small></span><span aria-hidden="true">›</span>`;
   const views = { ringkasan: () => dashboard(state, monthList(), month, chart), transaksi: transactionPage,
-    rekening: () => accountsPage(state), kategori: () => categoriesPage(state, categoryGroup, manageGroups), pengaturan: settingsPage };
+    rekening: () => accountsPage(state), kategori: () => categoriesPage(state, categoryGroup, manageGroups),
+    tagihan: () => obligationsPage(state), pengaturan: settingsPage };
   $('#main').innerHTML = views[currentPage]();
   if (currentPage === 'transaksi') renderResults();
   if (fieldId) document.getElementById(fieldId)?.focus({ preventScroll: true });
@@ -226,13 +231,14 @@ window.addEventListener('hashchange', () => {
 dialog.addEventListener('close', () => { if (currentPage === 'pengaturan') render(); });
 
 function restorePreview(next) {
-  modal(t('Pulihkan backup'), `<p>${t('Backup berisi {accounts}, {groups}, dan {transactions}.', {
+  modal(t('Pulihkan backup'), `<p>${t('Backup berisi {accounts}, {groups}, {transactions}, dan {obligations}.', {
     accounts: '<strong>' + t(next.accounts.length === 1 ? '1 rekening' : '{count} rekening', { count: next.accounts.length }) + '</strong>',
     groups: '<strong>' + t(next.groups.length === 1 ? '1 kelompok' : '{count} kelompok', { count: next.groups.length }) + '</strong>',
     transactions: '<strong>' + t(next.transactions.length === 1 ? '1 transaksi' : '{count} transaksi', { count: next.transactions.length }) + '</strong>',
+    obligations: '<strong>' + t('{count} jadwal pembayaran', { count: next.obligations.length }) + '</strong>',
   })}</p><p>${t('Pemulihan akan mengganti data akun aktif dan perangkat lain yang tersinkron. Unduh backup yang sekarang jika masih diperlukan.')}</p>`, () =>
     commit(draft => {
-      for (const key of ['accounts', 'groups', 'transactions']) draft[key] = next[key];
+      for (const key of collections) draft[key] = next[key];
     }, t('Backup dipulihkan.')), t('Ganti data dan pulihkan'));
 }
 const backupName = () => 'arus-backup-' + today() + '.json';
@@ -284,6 +290,27 @@ const handlers = {
   'edit-transaction': button => editTransaction(lookup(state.transactions, button.dataset.id)),
   'remove-transaction': button => modal(t('Hapus transaksi?'), `<p>${t('Saldo dan laporan akan dihitung ulang setelah transaksi dihapus.')}</p>`, () =>
     commit(draft => { draft.transactions = draft.transactions.filter(tx => tx.id !== button.dataset.id); }, t('Transaksi dihapus.')), t('Hapus transaksi')),
+  'add-obligation': () => obligationForm(undefined, commit),
+  'edit-obligation': button => {
+    const item = lookup(state.obligations || [], button.dataset.id);
+    if (item) obligationForm(item, commit);
+  },
+  'pay-obligation': button => {
+    const item = lookup(state.obligations || [], button.dataset.id);
+    if (!item || item.archived) return;
+    if (!state.accounts.length) {
+      notify('Tambahkan rekening sebelum mencatat transaksi.');
+      return accountForm(undefined, commit);
+    }
+    if (!categories(state).some(category => !category.archived && !category.group.archived)) {
+      notify('Tambahkan kategori aktif sebelum mencatat pembayaran.');
+      return route('kategori');
+    }
+    const progress = obligationProgress(item, state.transactions.filter(tx => tx.obligation === item.id));
+    if (item.kind === 'loan' ? progress.remaining > 0 : progress.due) obligationPaymentForm(state, item, progress, commit);
+  },
+  'obligation-history': button => showTransactions({ obligation: button.dataset.id, all: true }),
+  'clear-obligation': () => { delete filters.obligation; render(); $('#query')?.focus(); },
   'add-account': () => accountForm(undefined, commit),
   'edit-account': button => accountForm(lookup(state.accounts, button.dataset.id), commit),
   'add-group': () => groupForm(undefined, commit),
@@ -296,6 +323,7 @@ const handlers = {
   'all-transactions': () => showTransactions(),
   metric: button => showTransactions({ type: button.dataset.id }),
   'category-transactions': button => showTransactions({ category: button.dataset.id }),
+  'review-categories': () => showTransactions({ category: categoryReviewFilter, all: true }),
   'account-transactions': button => showTransactions({ account: button.dataset.id, all: true }),
   'clear-range': () => { delete filters.start; delete filters.end; render(); $('#query')?.focus(); },
   'clear-filters': () => { clearTimeout(queryTimer); filters = { all: filters.all }; render(); $('#query')?.focus(); },
