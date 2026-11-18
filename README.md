@@ -1,35 +1,46 @@
 # Arus Money Tracker
 
-Arus adalah PWA untuk pencatatan keuangan pribadi dalam rupiah. **Masuk dengan Google** dari layar awal untuk membuka data rekening dan transaksi yang disimpan per akun. Setelah login dan sinkronisasi pertama, aplikasi dapat memakai salinan data akun di perangkat saat koneksi terputus.
+Arus adalah aplikasi pencatatan keuangan pribadi dalam rupiah. Masuk dengan Google untuk mengakses rekening, transaksi, dan laporan Anda. Data dipisahkan per akun.
 
-## Jalankan lokal
+**[Buka Arus di Vercel](https://arus-eta.vercel.app/)**
 
-Dari direktori ini, jalankan `node dev.mjs`, lalu buka `http://127.0.0.1:4173`. Node.js diperlukan untuk menjalankan server lokal. Frontend disajikan langsung dari `dist/`.
+## Fitur
 
-## Aktifkan sinkronisasi dan login Google
+- Catat pemasukan, gaji, pengeluaran, dan transfer antar rekening. Nominal seperti `10000` otomatis tampil sebagai `10.000` saat diketik.
+- Kelola rekening bank, e-wallet, uang tunai, dan tabungan. Pilih logo dari katalog atau tambahkan nama penyedia dan logo sendiri.
+- Kelompokkan pengeluaran dalam dua tingkat, misalnya **Kebutuhan → Makan**.
+- Lihat total saldo, sisa gaji, dan grafik arus kas harian atau mingguan. Klik grafik untuk melihat transaksi yang terkait.
+- Sinkronkan data lewat Supabase. Aplikasi dapat membuka salinan data akun saat offline setelah login dan sinkronisasi pertama.
+- Ekspor transaksi ke Excel atau CSV. Unduh backup JSON, atau simpan dan pulihkan backup melalui Google Drive.
+- Catat transaksi, cek saldo, dan lihat ringkasan bulanan dari menu bot Telegram.
 
-1. Siapkan proyek Supabase. Jalankan migrasi `supabase/migrations/202611180001_arus.sql` melalui SQL Editor atau `supabase db push` dari proyek yang sudah ditautkan.
-2. Buat kredensial **OAuth Client ID** bertipe **Web application** di Google Cloud. Masukkan origin Arus seperti `https://arus-money-tracker.lovabledish4.chatgpt.site` pada **Authorized JavaScript origins**. Tambahkan `https://<project-ref>.supabase.co/auth/v1/callback` pada **Authorized redirect URIs**.
-3. Aktifkan penyedia Google di Supabase Auth dan isi Client ID serta Client Secret di sana. Di **Auth → URL Configuration**, atur **Site URL** ke alamat Arus. Tambahkan alamat lokal ke daftar redirect jika akan menguji login lokal. Jika consent screen Google dalam status Testing, tambahkan akun penguji yang diperlukan.
-4. Isi `supabaseUrl` dan `supabaseKey` di `dist/config.mjs` memakai URL proyek dan **publishable key** (atau legacy anon key). Publikasikan ulang frontend. Simpan service-role key dan OAuth Client Secret di layanan backend.
-5. Jika masih memiliki catatan lokal di versi lama, unduh backup JSON dari versi itu. Masuk dengan Google di versi baru, lalu pulihkan file melalui Pengaturan. Pemulihan mengganti data akun aktif dan meminta konfirmasi.
+## Cara menggunakan web
 
-## Aktifkan Google Drive
+1. Buka [Arus](https://arus-eta.vercel.app/) dan pilih **Masuk dengan Google**.
+2. Buka **Rekening → Tambah rekening**, pilih jenis rekening, lalu isi nama dan saldo awal. Untuk penyedia baru, pilih **Ketik penyedia sendiri**. Logo kustom mendukung PNG, JPG, dan WebP hingga 5 MB.
+3. Pilih **Tambah transaksi**, lalu isi nominal dan jenis transaksi. Tandai pemasukan sebagai gaji atau pengeluaran sebagai **Dari gaji** jika ingin mengikutkannya dalam perhitungan sisa gaji.
+4. Buka **Ringkasan** untuk memilih periode dan menelusuri grafik. Buka **Transaksi** untuk memfilter data dan mengekspornya, atau **Pengaturan** untuk membuat backup.
 
-Aktifkan **Google Drive API** di proyek Google Cloud yang sama. Tambahkan `https://www.googleapis.com/auth/drive.file` ke konfigurasi izin Google dan isi `googleClientId` di `dist/config.mjs`. Pengguna memberi izin dari Pengaturan saat menyimpan atau memulihkan file. File JSON tersimpan di Drive pengguna.
+## Cara menggunakan Telegram
 
-## Aktifkan Telegram
+Di Arus, buka **Pengaturan → Hubungkan Telegram**, lalu tekan **Start** di chat pribadi dengan [@Arus1_bot](https://t.me/Arus1_bot). Setelah tertaut, ketik `/menu`. Misalnya, pilih **Catat Pemasukan**, balas pesan bot dengan `BCA 500.000`, lalu tekan **Simpan** pada pratinjau.
 
-1. Buat bot dengan `@BotFather`. Isi `telegramUsername` di `dist/config.mjs` menggunakan username tanpa `@`.
-2. Deploy Supabase Edge Function dengan `supabase functions deploy telegram --no-verify-jwt`. Endpoint melakukan pemeriksaan pengguna Supabase untuk permintaan dari aplikasi dan memeriksa secret header untuk webhook Telegram.
-3. Atur `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, dan `ARUS_ORIGINS` sebagai secrets di Edge Functions. `ARUS_ORIGINS` berisi origin Arus, dipisahkan dengan koma jika ada beberapa origin. Gunakan secret webhook acak yang terdiri dari huruf, angka, `-`, dan `_`.
-4. Daftarkan webhook dengan Telegram Bot API `setWebhook`. Kirim JSON dengan `url` bernilai `https://<project-ref>.supabase.co/functions/v1/telegram`, `secret_token` yang sama dengan secret webhook, dan `allowed_updates` berisi `["message", "callback_query"]`. Simpan token BotFather di secret store atau variabel lingkungan saat mendaftarkan webhook.
-5. Masuk ke Arus, tambah rekening dan kategori, lalu pilih **Pengaturan → Hubungkan Telegram**. Di percakapan privat, tekan **Start**, kirim `makan 25000 cash`, dan pilih **Simpan**. Pengeluaran akan muncul setelah aplikasi menyinkronkan data.
+| Untuk | Contoh pesan langsung |
+|---|---|
+| Pengeluaran | `makan tunai 25.000` |
+| Pengeluaran dari gaji | `makan tunai 25.000 dari gaji` |
+| Pemasukan | `pemasukan BCA 500.000` |
+| Gaji | `gaji BCA 8.000.000` |
+| Catat transfer antar rekening | `transfer BCA > tunai 100.000` |
+| Saldo per rekening | `/saldo` |
+| Ringkasan bulan ini | `/ringkasan` |
 
-## Format data
+Gunakan nama rekening dan kategori yang ada di Arus. Transaksi masuk setelah Anda menekan **Simpan**. Saldo dan ringkasan bot mengikuti data di Supabase.
 
-- CSV berisi transaksi yang sesuai dengan filter. XLSX juga menyertakan ringkasan dan saldo rekening saat ini.
-- Backup JSON menyimpan semua transaksi, rekening, kategori, dan logo kustom. Logo kustom diunggah dari PNG, JPG, atau WebP berukuran maksimal 5 MB dan diperkecil sebelum disinkronkan. Simpan file backup di lokasi yang hanya bisa Anda akses.
-- Saldo dihitung dari saldo awal dan transaksi sampai hari ini. Perhitungan periode harian memakai zona waktu Asia/Jakarta.
-- Logo katalog berasal dari [idn-finlogos](https://github.com/hafidznoor/idn-finlogos), dikurasi oleh Hafidz Noor Fauzi, dan digunakan tanpa modifikasi berdasarkan lisensi [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Logo BCA merupakan merek terdaftar milik PT Bank Central Asia Tbk. Merek lainnya tetap milik pemilik masing-masing.
-"# arus" 
+## Pengembangan dan deployment
+
+- Jalankan `node dev.mjs` dari direktori proyek, lalu buka `http://127.0.0.1:4173`. Jalankan `node --test` untuk menguji proyek.
+- Frontend statis ada di `dist/`. Pengaturan Vercel menggunakan preset **Other**, direktori output `dist`, dan perintah build kosong.
+- Untuk mengaktifkan Supabase, Google Drive, dan Telegram pada instalasi baru, ikuti [tutorial aktivasi](TUTORIAL.md). Untuk memperbarui bot yang sudah aktif, jalankan [migrasi transaksi Telegram](supabase/migrations/202611180002_telegram_transactions.sql) sebelum menerapkan ulang [Edge Function telegram](supabase/functions/telegram/index.ts) di Supabase.
+
+Logo katalog berasal dari [idn-finlogos](https://github.com/hafidznoor/idn-finlogos), dikurasi oleh Hafidz Noor Fauzi dan digunakan tanpa modifikasi dengan lisensi [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Logo BCA merupakan merek terdaftar milik PT Bank Central Asia Tbk. Merek lainnya tetap milik pemilik masing-masing.

@@ -2,19 +2,19 @@
 
 Ikuti urutan Supabase dan login Google, Google Drive, lalu Telegram. Anda bisa mengerjakan ketiganya lewat dashboard. Pendaftaran webhook Telegram memakai satu blok PowerShell.
 
-Alamat Arus yang dipakai dalam tutorial ini adalah `https://arus-money-tracker.lovabledish4.chatgpt.site`.
+Alamat produksi Arus adalah `https://arus-eta.vercel.app`. Gunakan domain Vercel Anda sendiri jika membuat deployment terpisah.
 
 ## 1. Supabase dan login Google
 
 1. Di [Dashboard Supabase](https://supabase.com/dashboard), klik **New project**. Pilih organisasi, beri nama `arus`, dan simpan password database di tempat aman.
 2. Setelah proyek siap, klik **Connect**. Catat **Project URL** (`https://….supabase.co`) dan **Publishable key** (`sb_publishable_…`). [Panduan API key](https://supabase.com/docs/guides/getting-started/api-keys)
-3. Buka **SQL Editor → New query**. Salin seluruh isi [file migrasi SQL](supabase/migrations/202611180001_arus.sql), tempel, lalu klik **Run** satu kali. Buka **Table Editor** dan cek bahwa tabel `ledgers` sudah muncul.
+3. Buka **SQL Editor → New query**. Jalankan [migrasi tabel Arus](supabase/migrations/202611180001_arus.sql) satu kali, lalu jalankan [migrasi menu Telegram](supabase/migrations/202611180002_telegram_transactions.sql). Jika tabel Arus sudah pernah dibuat, cukup jalankan migrasi menu Telegram. Buka **Table Editor** untuk mengecek tabel `ledgers`.
 4. Buat proyek di [Google Cloud Console](https://console.cloud.google.com/). Di **Google Auth Platform → Branding**, isi nama aplikasi `Arus` dan email Anda. Untuk akun Gmail pribadi, pilih **Audience → External**. Jika aplikasi berstatus **Testing**, tambahkan email yang akan dipakai di **Test users**. [Panduan consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent)
 5. Buka **Google Auth Platform → Clients → Create client**, lalu pilih **Web application**. Isi kolom berikut dan simpan. Catat **Client ID** dan **Client Secret**.
 
    | Kolom | Isi |
    |---|---|
-   | **Authorized JavaScript origins** | `https://arus-money-tracker.lovabledish4.chatgpt.site` |
+   | **Authorized JavaScript origins** | `https://arus-eta.vercel.app` |
    | **Authorized redirect URIs** | Salin URL callback dari pengaturan provider Google di Supabase. Biasanya `https://<project-ref>.supabase.co/auth/v1/callback`. |
 
 6. Di Supabase, buka **Authentication → Sign In / Providers → Google**. Aktifkan provider Google, masukkan **Client ID** dan **Client Secret**, lalu simpan. Di **Authentication → URL Configuration**, isi **Site URL** dengan alamat Arus di atas. [Panduan login Google](https://supabase.com/docs/guides/auth/social-sign-in/auth-google)
@@ -35,7 +35,7 @@ Alamat Arus yang dipakai dalam tutorial ini adalah `https://arus-money-tracker.l
    |---|---|
    | `TELEGRAM_BOT_TOKEN` | Token dari BotFather |
    | `TELEGRAM_WEBHOOK_SECRET` | Kode acak yang baru dibuat |
-   | `ARUS_ORIGINS` | `https://arus-money-tracker.lovabledish4.chatgpt.site` |
+   | `ARUS_ORIGINS` | `https://arus-eta.vercel.app` |
 
 5. Tempel blok berikut ke **PowerShell**, lalu jawab tiga prompt. Gunakan **Project URL Supabase** dari bagian pertama dan **secret webhook** yang sama persis dengan yang disimpan di Supabase. Hasil sukses menampilkan `ok : True`. [Dokumentasi setWebhook](https://core.telegram.org/bots/api#setwebhook)
 
@@ -64,8 +64,8 @@ Alamat Arus yang dipakai dalam tutorial ini adalah `https://arus-money-tracker.l
 
 Kirim **Project URL Supabase**, **Publishable key**, **Google OAuth Client ID**, dan **username bot tanpa `@`** ke Codex agar konfigurasi Arus bisa diisi dan dipublikasikan ulang. Simpan **Client Secret**, **token bot**, **secret webhook**, dan **password database** di pengaturan layanan terkait atau pengelola kata sandi.
 
-Setelah publikasi selesai, buka [Arus Money Tracker](https://arus-money-tracker.lovabledish4.chatgpt.site) dan uji satu per satu.
+Setelah publikasi selesai, buka [Arus Money Tracker](https://arus-eta.vercel.app/) dan uji satu per satu.
 
 1. **Login.** Pilih **Masuk dengan Google** dari layar awal. Gunakan akun yang ditambahkan sebagai penguji jika OAuth masih berstatus **Testing**.
 2. **Drive.** Pilih **Pengaturan → Google Drive → Simpan ke Drive**, beri izin, lalu cek apakah file `arus-backup-YYYY-MM-DD.json` muncul di Drive.
-3. **Telegram.** Tambahkan rekening **Cash** di Arus. Pilih **Pengaturan → Hubungkan Telegram**, tekan **Start** di percakapan privat, kirim `makan 25000 cash`, lalu tekan **Simpan**. Cek apakah pengeluaran Rp25.000 muncul setelah sinkronisasi.
+3. **Telegram.** Tambahkan rekening **Cash** di Arus. Pilih **Pengaturan → Hubungkan Telegram** jika akun belum tertaut. Di chat privat, kirim `/menu`, pilih **Catat Pengeluaran**, lalu balas `makan tunai 25.000` dan tekan **Simpan**. Untuk menguji pemasukan, pilih **Catat Pemasukan**, lalu balas `tunai 100.000` dan simpan. Pilih **Saldo** untuk mengecek hasilnya. Contoh singkat lainnya ada di [panduan Arus](README.md#cara-menggunakan-telegram).

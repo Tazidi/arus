@@ -5,11 +5,14 @@ const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
 const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 const origins = (Deno.env.get('ARUS_ORIGINS') || '').split(',').map(value => value.trim()).filter(Boolean);
 
-type Account = { id: string; name: string; provider?: string; type: string };
+type Account = { id: string; name: string; provider?: string; customProvider?: string; type: string; opening: number; savings?: boolean };
 type Category = { id: string; name: string; archived?: boolean };
 type Group = { archived?: boolean; categories: Category[] };
-type Ledger = { state: { accounts: Account[]; groups: Group[] } };
-type Message = { chat: { type: string; id: number }; text?: string; message_id: number };
+type Transaction = { type: 'income' | 'expense' | 'transfer'; date: string; amount: number; account: string;
+  to?: string; salary?: boolean };
+type Ledger = { state: { accounts: Account[]; groups: Group[]; transactions: Transaction[] } };
+type Message = { chat: { type: string; id: number }; text?: string; message_id: number;
+  reply_to_message?: { text?: string; from?: { is_bot?: boolean } } };
 type Callback = { id: string; data?: string; message?: Message };
 type Update = { update_id: number; message?: Message; callback_query?: Callback };
 type Reply = Record<string, unknown>;
@@ -19,7 +22,8 @@ async function call<T>(path: string, options: RequestInit = {}, key = serviceKey
     ...options, headers: { apikey: key, Authorization: 'Bearer ' + bearer, 'Content-Type': 'application/json', ...options.headers },
   });
   if (!response.ok) throw new Error('Backend request failed with status ' + response.status);
-  return response.status === 204 ? undefined as T : await response.json() as T;
+  const payload = await response.text();
+  return payload ? JSON.parse(payload) as T : undefined as T;
 }
 const rest = <T>(path: string, options?: RequestInit) => call<T>('/rest/v1/' + path, options);
 const rpc = <T>(name: string, payload: Reply) => rest<T>('rpc/' + name, { method: 'POST', body: JSON.stringify(payload) });
@@ -45,7 +49,136 @@ async function send(method: string, payload: Reply) {
 }
 const say = (chat: string, text: string, options: Reply = {}) =>
   send('sendMessage', { chat_id: chat, text, protect_content: true, ...options });
-const howTo = 'Kirim kategori, nominal rupiah, dan rekening. Contoh: makan 25000 cash. Nama kategori dan rekening mengikuti data di Arus.';
+const menu = { reply_markup: { keyboard: [
+  [{ text: 'Catat Pengeluaran' }, { text: 'Catat Pemasukan' }],
+  [{ text: 'Catat Gaji' }, { text: 'Catat Transfer' }],
+  [{ text: 'Saldo' }, { text: 'Ringkasan' }],
+], resize_keyboard: true, is_persistent: true } };
+const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
+const labels = { income: 'Pemasukan', expense: 'Pengeluaran', transfer: 'Transfer' };
+const amountPattern = String.raw`(\d{1,13}|\d{1,3}(?:\.\d{3}){1,4})`;
+const middleAmount = new RegExp('^(.{1,80}?) ' + amountPattern + ' (.{1,80})$', 'u');
+const trailingAmount = new RegExp('^(.{3,161}) ' + amountPattern + '$', 'u');
+const shortAmount = new RegExp('^(.{1,80}) ' + amountPattern + '$', 'u');
+const leadingAmount = new RegExp('^' + amountPattern + ' (.{1,80})$', 'u');
+const parseAmount = (amount: string) => {
+  const value = Number(amount.replaceAll('.', ''));
+  return value >= 1 && value <= 1e12 ? value : 0;
+};
+const activeCategories = (state: Ledger['state']) =>
+  state.groups.filter(group => !group.archived).flatMap(group => group.categories).filter(category => !category.archived);
+
+function findAccount(input: string, available: Account[]) {
+  const name = normalize(input);
+  if (!name) return;
+  const exact = available.filter(account => normalize(account.name) === name);
+  const matches = exact.length ? exact : available.filter(account => normalize(account.provider || '') === name ||
+    normalize(account.customProvider || '') === name || (account.type === 'cash' && ['cash', 'tunai'].includes(name)));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function expenseDetails(input: string, state: Ledger['state']) {
+  const categories = activeCategories(state);
+  const middle = middleAmount.exec(input);
+  const trailing = trailingAmount.exec(input);
+  const candidates: { category: string; account: string; amount: string }[] = [];
+  if (middle) candidates.push({ category: middle[1], account: middle[3], amount: middle[2] });
+  if (trailing) {
+    for (const name of new Set(categories.map(category => normalize(category.name)))) {
+      if (trailing[1].startsWith(name + ' ')) {
+        candidates.push({ category: name, account: trailing[1].slice(name.length + 1), amount: trailing[2] });
+      }
+    }
+  }
+
+  const matches = new Map<string, { category: Category; account: Account; amount: number }>();
+  for (const candidate of candidates) {
+    const amount = parseAmount(candidate.amount);
+    const account = findAccount(candidate.account, state.accounts);
+    const matchingCategories = categories.filter(category => normalize(category.name) === candidate.category);
+    if (!amount || !account || matchingCategories.length !== 1) continue;
+    const [category] = matchingCategories;
+    matches.set(JSON.stringify([account.id, category.id, amount]), { category, account, amount });
+  }
+  return matches.size === 1 ? matches.values().next().value : undefined;
+}
+
+type Details = { type: Transaction['type']; account: Account; amount: number; category?: Category; to?: Account; salary?: boolean };
+function transactionDetails(input: string, state: Ledger['state']): Details | undefined {
+  const income = /^(pemasukan|gaji) (.+)$/u.exec(input);
+  if (income) {
+    const end = shortAmount.exec(income[2]);
+    const start = leadingAmount.exec(income[2]);
+    const matches = new Map<string, Details>();
+    for (const [name, raw] of [end && [end[1], end[2]], start && [start[2], start[1]]].filter(pair => pair !== null)) {
+      const account = findAccount(name, state.accounts);
+      const amount = parseAmount(raw);
+      if (amount && account) matches.set(JSON.stringify([account.id, amount]), { type: 'income', account, amount, salary: income[1] === 'gaji' });
+    }
+    return matches.size === 1 ? matches.values().next().value : undefined;
+  }
+  if (input.startsWith('transfer ')) {
+    const parts = input.slice('transfer '.length).split('>');
+    if (parts.length !== 2) return;
+    const destination = shortAmount.exec(parts[1].trim());
+    if (!destination) return;
+    const account = findAccount(parts[0], state.accounts);
+    const to = findAccount(destination[1], state.accounts);
+    const amount = parseAmount(destination[2]);
+    if (account && to && account.id !== to.id && amount) return { type: 'transfer', account, to, amount };
+    return;
+  }
+  const salary = input.endsWith(' dari gaji');
+  const expense = expenseDetails(salary ? input.slice(0, -' dari gaji'.length) : input, state);
+  if (expense) return { ...expense, type: 'expense', salary };
+}
+
+const guideLabels = { 'catat pengeluaran': 'pengeluaran', 'catat pemasukan': 'pemasukan',
+  'catat gaji': 'gaji', 'catat transfer': 'transfer' } as const;
+const guides = {
+  pengeluaran: 'Balas dengan kategori, rekening, dan nominal. Contoh: makan tunai 25.000.\nUntuk pengeluaran dari gaji, tambahkan “dari gaji” di akhir.',
+  pemasukan: 'Balas dengan rekening tujuan dan nominal. Contoh: BCA 500.000.',
+  gaji: 'Balas dengan rekening tujuan dan nominal. Contoh: BCA 8.000.000. Transaksi ini dihitung dalam sisa gaji.',
+  transfer: 'Balas dengan rekening asal > rekening tujuan, lalu nominal. Contoh: BCA > tunai 100.000.',
+};
+const guideTitle = (kind: string) => 'Catat ' + kind + ' di Arus';
+function guidedInput(input: string, reply: Message['reply_to_message']) {
+  if (!reply?.from?.is_bot) return input;
+  const title = reply.text?.split('\n')[0];
+  const guide = Object.keys(guides).find(kind => title === guideTitle(kind));
+  if (guide && guide !== 'pengeluaran' && !input.startsWith(guide + ' ')) return guide + ' ' + input;
+  return input;
+}
+const menuText = 'Pilih menu di bawah untuk mencatat transaksi atau melihat laporan. Ketik /menu untuk menampilkan menu lagi.';
+const names = (items: { name: string }[]) => items.length ? items.slice(0, 12).map(item => item.name).join(', ') +
+  (items.length > 12 ? ' (+' + (items.length - 12) + ' lainnya)' : '') : 'Belum ada';
+
+function balanceReport(state: Ledger['state'], today: string) {
+  const balances = new Map(state.accounts.map(account => [account.id, account.opening]));
+  for (const tx of state.transactions) {
+    if (tx.date > today || !balances.has(tx.account)) continue;
+    balances.set(tx.account, balances.get(tx.account)! + (tx.type === 'income' ? tx.amount : -tx.amount));
+    if (tx.type === 'transfer' && tx.to && balances.has(tx.to)) balances.set(tx.to, balances.get(tx.to)! + tx.amount);
+  }
+  const total = Array.from(balances.values()).reduce((sum, amount) => sum + amount, 0);
+  const lines = state.accounts.slice(0, 25).map(account => account.name + ' · ' + money.format(balances.get(account.id)!));
+  if (state.accounts.length > 25) lines.push('+' + (state.accounts.length - 25) + ' rekening lainnya.');
+  return 'Total saldo ' + money.format(total) + '\n\n' + (lines.join('\n') || 'Belum ada rekening.');
+}
+
+function monthReport(state: Ledger['state'], today: string) {
+  const month = today.slice(0, 7);
+  let income = 0, expenses = 0, salary = 0, spentFromSalary = 0;
+  for (const tx of state.transactions) {
+    if (!tx.date.startsWith(month)) continue;
+    if (tx.type === 'income') { income += tx.amount; if (tx.salary) salary += tx.amount; }
+    if (tx.type === 'expense') { expenses += tx.amount; if (tx.salary) spentFromSalary += tx.amount; }
+  }
+  const period = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' })
+    .format(new Date(today + 'T12:00:00+07:00'));
+  return ['Ringkasan ' + period, 'Pemasukan ' + money.format(income), 'Pengeluaran ' + money.format(expenses),
+    'Arus kas bersih ' + money.format(income - expenses), 'Sisa gaji ' + money.format(salary - spentFromSalary)].join('\n');
+}
 
 async function handleCallback(query: Callback) {
   if (query.message?.chat.type !== 'private') return;
@@ -55,7 +188,7 @@ async function handleCallback(query: Callback) {
   const outcome = await rpc<'saved' | 'unlinked' | 'expired' | 'invalid' | 'cancelled'>('arus_confirm_telegram', {
     input_chat: chat, input_update: action[2], should_save: action[1] === 'save',
   });
-  const label = { saved: 'Pengeluaran tersimpan di Arus.', unlinked: 'Hubungkan bot melalui pengaturan Arus.',
+  const label = { saved: 'Transaksi tersimpan di Arus.', unlinked: 'Hubungkan bot melalui pengaturan Arus.',
     expired: 'Pratinjau sudah kedaluwarsa. Kirim transaksi lagi.', invalid: 'Rekening atau kategori berubah. Kirim transaksi lagi.',
     cancelled: 'Pencatatan dibatalkan.' }[outcome];
   await send('answerCallbackQuery', { callback_query_id: query.id, text: label }).catch(() => {});
@@ -70,7 +203,8 @@ async function handleUpdate(update: Update) {
   const command = /^\/start(?:@\w+)?(?: ([a-f0-9]{32}))?$/.exec(text);
   if (command?.[1]) {
     const linked = await rpc<boolean>('arus_link_telegram', { input_hash: await hash(command[1]), input_chat: chat });
-    await say(chat, linked ? 'Telegram terhubung ke Arus. ' + howTo : 'Tautan tidak berlaku atau Telegram ini sudah terhubung ke akun lain.');
+    if (linked) await say(chat, 'Telegram terhubung ke Arus.\n' + menuText, menu);
+    else await say(chat, 'Tautan tidak berlaku atau Telegram ini sudah terhubung ke akun lain.');
     return;
   }
   const [link] = await rest<{ user_id: string }[]>('telegram_links?chat_id=' + equals(chat) + '&select=user_id');
@@ -78,43 +212,38 @@ async function handleUpdate(update: Update) {
     await say(chat, 'Hubungkan Telegram dari Pengaturan akun Arus terlebih dahulu.');
     return;
   }
-  const parsed = /^(.{1,80}?)\s+([0-9]{1,13})\s+(.{1,80})$/u.exec(text);
-  if (!parsed && text.startsWith('/')) {
-    await say(chat, howTo);
-    return;
-  }
-  const amount = parsed ? Number(parsed[2]) : 0;
-  if (!parsed || amount < 1 || amount > 1e12) {
-    await say(chat, howTo);
-    return;
-  }
+  const input = normalize(text).replace(/^\/([a-z]+)(?:@\w+)?(?= |$)/, '$1');
+  if (['start', 'menu', 'help', 'bantuan'].includes(input)) return say(chat, menuText, menu);
   const [ledger] = await rest<Ledger[]>('ledgers?user_id=' + equals(link.user_id) + '&select=state');
   if (!ledger) {
     await say(chat, 'Buka Arus untuk menyiapkan rekening dan kategori.');
     return;
   }
-  const actual = normalize(parsed[3]);
-  const exact = ledger.state.accounts.filter(account => normalize(account.name) === actual);
-  const accounts = exact.length ? exact : ledger.state.accounts.filter(account =>
-    normalize(account.provider || '') === actual || (account.type === 'cash' && actual === 'cash'));
-  const categoryMatches = ledger.state.groups.filter(group => !group.archived).flatMap(group => group.categories)
-    .filter(category => !category.archived && normalize(category.name) === normalize(parsed[1]));
-  if (accounts.length !== 1 || categoryMatches.length !== 1) {
-    await say(chat, 'Rekening atau kategori tidak ditemukan secara unik. Gunakan nama yang tercantum di Arus dan pastikan nama kategori tidak ganda.');
+  const state = ledger.state;
+  if (input === 'saldo') return say(chat, balanceReport(state, nowDate()));
+  if (input === 'ringkasan') return say(chat, monthReport(state, nowDate()));
+  const guide = Object.hasOwn(guideLabels, input) ? guideLabels[input as keyof typeof guideLabels] : undefined;
+  if (guide) return say(chat, guideTitle(guide) + '\n\n' + guides[guide] + '\n\nRekening: ' + names(state.accounts) +
+    (guide === 'pengeluaran' ? '\nKategori: ' + names(activeCategories(state)) : ''),
+    { reply_markup: { force_reply: true, input_field_placeholder: 'Masukkan detail transaksi' } });
+  const details = transactionDetails(guidedInput(input, message.reply_to_message), state);
+  if (!details) {
+    await say(chat, 'Transaksi belum dikenali. Pilih tombol sesuai jenis transaksi untuk melihat format dan nama rekening.', menu);
     return;
   }
-  const [account] = accounts;
-  const [category] = categoryMatches;
+  const { type, account, category, to, amount, salary } = details;
   const updateId = String(update.update_id);
-  const next = { id: 'telegram-' + updateId, type: 'expense', account: account.id, category: category.id, amount,
-    date: nowDate(), created: new Date().toISOString(), to: '', note: category.name, salary: false };
+  const label = type === 'income' && salary ? 'Gaji' : labels[type];
+  const next = { id: 'telegram-' + updateId, type, account: account.id, category: category?.id || '', amount,
+    date: nowDate(), created: new Date().toISOString(), to: to?.id || '', note: category?.name || label, salary: !!salary };
   await rest('telegram_drafts?chat_id=' + equals(chat) + '&expires_at=lt.' + encodeURIComponent(next.created), { method: 'DELETE' });
   await rest('telegram_drafts', {
     method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
     body: JSON.stringify({ chat_id: chat, update_id: updateId, transaction_data: next }),
   });
-  const formatted = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(amount);
-  await say(chat, 'Simpan pengeluaran ini?\n' + category.name + ' · ' + formatted + '\nRekening: ' + account.name, {
+  const preview = [label + ' · ' + money.format(amount), to ? account.name + ' → ' + to.name : 'Rekening: ' + account.name];
+  if (category) preview.push('Kategori: ' + category.name + (salary ? ' · Dari gaji' : ''));
+  await say(chat, preview.join('\n'), {
     reply_markup: { inline_keyboard: [[{ text: 'Simpan', callback_data: 'save:' + updateId }, { text: 'Batal', callback_data: 'cancel:' + updateId }]] },
   });
 }
