@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111820">
+  <meta name="description" content="Catat pemasukan, pengeluaran, dan saldo rekening pribadi dalam rupiah.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Arus · Money Tracker</title>
+</head>
+<body>
+  <main id="sign-in" class="sign-in">
+    <section class="card sign-in-card" aria-labelledby="sign-in-title">
+      <div class="brand"><img src="./icon.png" width="36" height="36" alt=""><span>arus<span class="brand-dot">.</span></span></div>
+      <h1 id="sign-in-title">Masuk ke Arus</h1>
+      <p>Gunakan akun Google untuk membuka catatan keuangan Anda.</p>
+      <button class="primary" data-action="login" id="google-login" disabled>Masuk dengan Google</button>
+      <p id="sign-in-status" role="status">Memeriksa sesi…</p>
+    </section>
+  </main>
+  <div class="shell" id="authenticated-app" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#ringkasan"><img src="./icon.png" width="36" height="36" alt=""><span>arus<span class="brand-dot">.</span><small>Money Tracker</small></span></a>
+      <nav aria-label="Navigasi utama" id="nav"></nav>
+      <div class="sidebar-bottom"><div id="sync-status" class="sync" aria-live="polite"></div><button class="profile" data-action="profile" id="profile"></button></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><span id="breadcrumb"></span><div class="top-actions"><button class="secondary" data-action="settings">Akun Google</button><button class="primary" data-action="add-transaction"><span aria-hidden="true">＋</span> <span>Tambah transaksi</span></button></div></header>
+      <div id="mobile-sync-status" class="sync mobile-sync" aria-live="polite" hidden></div>
+      <main id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><form id="form"><div class="dialog-head"><h2 id="dialog-title"></h2><button type="button" class="icon-button" data-action="close" aria-label="Tutup">×</button></div><div id="dialog-body"></div><p class="error" id="form-error" role="alert"></p><div id="dialog-actions" class="dialog-actions"></div></form></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input id="file-input" type="file" accept=".json,application/json" hidden>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

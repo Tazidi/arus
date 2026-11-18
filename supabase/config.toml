@@ -1,0 +1,4 @@
+project_id = "arus-money-tracker"
+
+[functions.telegram]
+verify_jwt = false
