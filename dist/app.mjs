@@ -1,3 +1,4 @@
+import { categoryName, groupName, language, locale, setPreference, t, theme } from './preferences.mjs';
 import { config } from './config.mjs';
 import { categories, initial, today, types, validate } from './ledger.mjs';
 import { cloudReady, currentSession, finishLogin, hasChanges, load, login, logout, merge, requireAccount, save, sync, telegram } from './storage.mjs';
@@ -9,8 +10,10 @@ import { createDriveActions } from './drive.mjs';
 const $ = selector => document.querySelector(selector);
 const pages = { ringkasan: ['Ringkasan', 'dashboard'], transaksi: ['Transaksi', 'transactions'],
   rekening: ['Rekening', 'accounts'], kategori: ['Kategori', 'categories'], pengaturan: ['Pengaturan', 'settings'] };
-const chart = { daily: false, income: true, expense: true, group: '' };
+const chart = { monthly: false, income: true, expense: true, group: '' };
 let filters = {};
+let categoryGroup = '';
+let manageGroups = false;
 let month = today().slice(0, 7);
 let session;
 let record;
@@ -29,7 +32,7 @@ authChanges?.addEventListener('message', () => location.reload());
 
 function notify(message) {
   clearTimeout(toastTimer);
-  $('#toast').textContent = message;
+  $('#toast').textContent = t(message);
   $('#toast').classList.add('shown');
   toastTimer = setTimeout(() => $('#toast').classList.remove('shown'), 4200);
 }
@@ -43,15 +46,15 @@ function serialized(task, key = scope()) {
 function refreshStatus() {
   if (!session) {
     $('#google-login').disabled = openingSession || !cloudReady || !navigator.onLine;
-    $('#sign-in-status').textContent = openingSession ? 'Memeriksa sesi…' :
-      signInError || (!cloudReady ? 'Login belum tersedia. Lengkapi konfigurasi Supabase di dist/config.mjs.' :
-        !navigator.onLine ? 'Sambungkan internet untuk masuk.' : '');
+    $('#sign-in-status').textContent = openingSession ? t('Memeriksa sesi…') :
+      (signInError && t(signInError)) || (!cloudReady ? t('Login belum tersedia. Lengkapi konfigurasi Supabase di dist/config.mjs.') :
+        !navigator.onLine ? t('Sambungkan internet untuk masuk.') : '');
     return;
   }
   const pending = record && hasChanges(record);
-  const label = syncing ? 'Menyinkronkan…' : syncError ? 'Sinkronisasi perlu diperiksa' :
-      !navigator.onLine ? (pending ? 'Offline · menunggu sinkronisasi' : 'Offline') :
-      pending ? 'Menunggu sinkronisasi' : 'Tersinkron';
+  const label = syncing ? t('Menyinkronkan…') : syncError ? t('Sinkronisasi perlu diperiksa') :
+      !navigator.onLine ? (pending ? t('Offline · menunggu sinkronisasi') : 'Offline') :
+      pending ? t('Menunggu sinkronisasi') : t('Tersinkron');
   const content = `<i class="${syncError || !navigator.onLine ? 'warning' : ''}"></i>${label}`;
   $('#sync-status').innerHTML = content;
   $('#mobile-sync-status').innerHTML = content;
@@ -107,73 +110,102 @@ async function commit(change, message) {
 }
 const lookup = (items, key) => items.find(item => item.id === key);
 function transactions() {
-  const categoryNames = new Map(categories(state).map(item => [item.id, item.name + ' ' + item.group.name]));
+  const categoryNames = new Map(categories(state).map(item => [item.id, [categoryName(item), item.name, groupName(item.group), item.group.name].join(' ')]));
   const accountNames = new Map(state.accounts.map(item => [item.id, item.name]));
-  const search = filters.query?.toLocaleLowerCase('id') || '';
+  const search = filters.query?.toLocaleLowerCase(locale()) || '';
   return (filters.all ? state.transactions : monthList()).filter(tx =>
     (!filters.type || (filters.type === 'salary' ? tx.salary && tx.type !== 'transfer'
       : filters.type === 'cashflow' ? tx.type !== 'transfer' : filters.type === tx.type)) &&
     (!filters.account || tx.account === filters.account || tx.to === filters.account) &&
     (!filters.category || tx.category === filters.category) &&
     (!filters.start || (+tx.date.slice(-2) >= filters.start && +tx.date.slice(-2) <= filters.end)) &&
-    (!search || [tx.note, accountNames.get(tx.account), accountNames.get(tx.to), categoryNames.get(tx.category), tx.amount].join(' ').toLocaleLowerCase('id').includes(search)));
+    (!search || [tx.note, accountNames.get(tx.account), accountNames.get(tx.to), categoryNames.get(tx.category), tx.amount].join(' ').toLocaleLowerCase(locale()).includes(search)));
 }
 function transactionPage() {
-  return `<div class="page-intro"><div><h1>Transaksi</h1><p>Lihat riwayat pemasukan, pengeluaran, dan transfer.</p></div>${periodControl(month, true, filters.all)}</div>
+  return `<div class="page-intro"><div><h1>${t('Transaksi')}</h1><p>${t('Lihat riwayat pemasukan, pengeluaran, dan transfer.')}</p></div>${periodControl(month, true, filters.all)}</div>
     <section class="card"><div class="filters">
-    <label>Cari<input id="query" type="search" placeholder="Catatan, rekening, nominal…" value="${esc(filters.query)}"></label>
-    <label>Jenis<select id="type-filter">${option('', 'Semua jenis', filters.type)}${option('cashflow', 'Pemasukan dan pengeluaran', filters.type)}${Object.entries(types).map(([key, label]) => option(key, label, filters.type)).join('')}${option('salary', 'Gaji dan dari gaji', filters.type)}</select></label>
-    <label>Rekening<select id="account-filter">${option('', 'Semua rekening', filters.account)}${state.accounts.map(account => option(account.id, account.name, filters.account)).join('')}</select></label>
-    <label>Kategori<select id="category-filter">${option('', 'Semua kategori', filters.category)}${categories(state).map(item => option(item.id, item.group.name + ' · ' + item.name, filters.category)).join('')}</select></label>
-    ${filters.start ? `<button class="secondary small" data-action="clear-range">Tanggal ${filters.start}–${filters.end} ×</button>` : ''}</div>
-    <div class="list-toolbar"><span id="result-count"></span><div class="inline"><button class="secondary small" data-action="csv">${icon('download', 15)} CSV</button><button class="secondary small" data-action="xlsx">${icon('download', 15)} Excel</button></div></div>
+    <label>${t('Cari')}<input id="query" type="search" placeholder="${t('Catatan, rekening, nominal…')}" value="${esc(filters.query)}"></label>
+    <label>${t('Jenis')}<select id="type-filter">${option('', t('Semua jenis'), filters.type)}${option('cashflow', t('Pemasukan dan pengeluaran'), filters.type)}${Object.entries(types).map(([key, label]) => option(key, t(label), filters.type)).join('')}${option('salary', t('Gaji dan dari gaji'), filters.type)}</select></label>
+    <label>${t('Rekening')}<select id="account-filter">${option('', t('Semua rekening'), filters.account)}${state.accounts.map(account => option(account.id, account.name, filters.account)).join('')}</select></label>
+    <label>${t('Kategori')}<select id="category-filter">${option('', t('Semua kategori'), filters.category)}${categories(state).sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale())).map(item => option(item.id, categoryName(item), filters.category)).join('')}</select></label>
+    ${filters.start ? `<button class="secondary small" data-action="clear-range">${t('Tanggal {range}', { range: filters.start + '–' + filters.end })} ×</button>` : ''}</div>
+    <div class="list-toolbar"><div class="inline"><span id="result-count" role="status"></span><button class="text-button small" data-action="clear-filters" hidden>${t('Bersihkan filter')}</button></div><div class="inline"><button class="secondary small" data-action="csv">${icon('download', 15)} CSV</button><button class="secondary small" data-action="xlsx">${icon('download', 15)} Excel</button></div></div>
     <div id="transaction-results"></div></section>`;
 }
 function renderResults() {
   const list = transactions();
-  $('#result-count').textContent = list.length + ' transaksi';
+  $('#result-count').textContent = t(list.length === 1 ? '1 transaksi' : '{count} transaksi', { count: list.length });
+  $('[data-action="clear-filters"]').hidden = !['query', 'type', 'account', 'category', 'start'].some(key => filters[key]);
   $('#transaction-results').innerHTML = table(state, list);
 }
 function integrationCard(title, body, actions, symbol) {
   return `<section class="card settings-card"><div class="mini-icon">${icon(symbol, 19)}</div><div><h2>${title}</h2><p>${body}</p><div class="inline">${actions}</div></div></section>`;
 }
+function preferences(context) {
+  return `<div class="preference-fields">
+    <label>${t('Tema')}<select id="${context}-theme" data-preference="theme">
+      ${option('system', t('Sistem'), theme)}${option('dark', t('Gelap'), theme)}${option('light', t('Terang'), theme)}
+    </select></label>
+    <label>${t('Bahasa')}<select id="${context}-language" data-preference="language">
+      ${option('id', 'Bahasa Indonesia', language)}${option('en', 'English', language)}
+    </select></label>
+  </div>`;
+}
+function localizeShell() {
+  document.documentElement.lang = language;
+  document.querySelectorAll('[data-text]').forEach(node => { node.textContent = t(node.dataset.text); });
+  $('#nav').setAttribute('aria-label', t('Navigasi utama'));
+  $('#profile').setAttribute('aria-label', t('Akun saya'));
+  $('[data-action="close"]').setAttribute('aria-label', t('Tutup'));
+}
 function settingsPage() {
-  const button = (action, label) => `<button class="secondary small" data-action="${action}">${label}</button>`;
+  const button = (action, label) => `<button class="secondary small" data-action="${action}">${t(label)}</button>`;
   const drive = !!config.googleClientId;
   const bot = config.telegramUsername;
-  return `<div class="page-intro"><div><h1>Pengaturan</h1><p>Kelola penyimpanan, backup, dan integrasi.</p></div></div><div class="settings-grid">
-    ${integrationCard('Penyimpanan dan akun', `Masuk sebagai ${esc(session.user.email)}.`,
+  return `<div class="page-intro"><div><h1>${t('Pengaturan')}</h1><p>${t('Kelola penyimpanan, backup, dan integrasi.')}</p></div></div><div class="settings-grid">
+    ${integrationCard(t('Tampilan'), t('Atur tema dan bahasa di perangkat ini.'), preferences('settings'), 'appearance')}
+    ${integrationCard(t('Penyimpanan dan akun'), t('Masuk sebagai {email}.', { email: esc(session.user.email) }),
       button('sync', 'Sinkronkan') + button('logout', 'Keluar'), 'settings')}
-    ${syncError ? integrationCard('Sinkronisasi perlu diperiksa', esc(syncError.message), syncError.conflict ?
+    ${syncError ? integrationCard(t('Sinkronisasi perlu diperiksa'), esc(t(syncError.message)), syncError.conflict ?
       button('backup', 'Backup dulu') + button('resolve-local', 'Utamakan perubahan lokal') + button('resolve-remote', 'Muat versi cloud') :
       syncError.authRequired ? button('login', 'Masuk ulang dengan Google') : button('sync', 'Coba lagi'), 'transactions') : ''}
-    ${integrationCard('Backup file', 'Unduh data keseluruhan dalam format JSON atau pulihkan dari file backup Arus.', button('backup', 'Unduh JSON') + button('import', 'Pulihkan dari file'), 'download')}
-    ${integrationCard('Google Drive', drive ? 'Simpan atau pulihkan backup dari Google Drive dengan memberi izin akses.' :
-      'Backup Drive menunggu Google OAuth Client ID.', drive ? button('drive-save', 'Simpan ke Drive') + button('drive-restore', 'Pulihkan dari Drive') : '', 'savings')}
-    ${integrationCard('Telegram', connectedBot ? 'Bot terhubung. Kirim pesan seperti makan 25000 cash, lalu konfirmasi.' :
-      bot ? 'Hubungkan bot untuk mencatat pengeluaran dari percakapan privat.' : 'Integrasi menunggu konfigurasi bot Telegram.',
+    ${integrationCard(t('Backup file'), t('Unduh data keseluruhan dalam format JSON atau pulihkan dari file backup Arus.'), button('backup', 'Unduh JSON') + button('import', 'Pulihkan dari file'), 'download')}
+    ${integrationCard('Google Drive', drive ? t('Simpan atau pulihkan backup dari Google Drive dengan memberi izin akses.') :
+      t('Backup Drive menunggu Google OAuth Client ID.'), drive ? button('drive-save', 'Simpan ke Drive') + button('drive-restore', 'Pulihkan dari Drive') : '', 'savings')}
+    ${integrationCard('Telegram', connectedBot ? t('Bot terhubung. Kirim pesan seperti makan 25000 cash, lalu konfirmasi.') :
+      bot ? t('Hubungkan bot untuk mencatat pengeluaran dari percakapan privat.') : t('Integrasi menunggu konfigurasi bot Telegram.'),
     bot ? (connectedBot ? button('telegram-unlink', 'Putuskan tautan') : button('telegram-link', 'Hubungkan Telegram')) : '', 'telegram')}
-    </div><p class="credits">Katalog logo <a href="https://github.com/hafidznoor/idn-finlogos" target="_blank" rel="noopener noreferrer">idn-finlogos</a> dikurasi oleh Hafidz Noor Fauzi, digunakan tanpa modifikasi dengan lisensi <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a>. Logo BCA merupakan merek terdaftar milik PT Bank Central Asia Tbk. Merek lainnya tetap milik pemilik masing-masing.</p>`;
+    </div><p class="credits">${t('Katalog logo {catalog} dikurasi oleh Hafidz Noor Fauzi, digunakan tanpa modifikasi dengan lisensi {license}. Logo BCA merupakan merek terdaftar milik PT Bank Central Asia Tbk. Merek lainnya tetap milik pemilik masing-masing.', { catalog: '<a href="https://github.com/hafidznoor/idn-finlogos" target="_blank" rel="noopener noreferrer">idn-finlogos</a>', license: '<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a>' })}</p>`;
 }
 function render() {
+  localizeShell();
   $('#authenticated-app').hidden = !session;
   $('#sign-in').hidden = !!session;
   if (!session) {
+    $('#sign-in-preferences').innerHTML = preferences('sign-in');
     $('#main').replaceChildren();
     $('#profile').replaceChildren();
     refreshStatus();
     return;
   }
+  if (!lookup(state.groups, chart.group)) chart.group = '';
+  if (!lookup(state.groups, categoryGroup)) categoryGroup = '';
   const hash = location.hash.slice(1);
-  currentPage = Object.hasOwn(pages, hash) ? hash : 'ringkasan';
+  const nextPage = Object.hasOwn(pages, hash) ? hash : 'ringkasan';
+  const fieldId = nextPage === currentPage && $('#main').contains(document.activeElement) ? document.activeElement.id : '';
+  currentPage = nextPage;
   $('#nav').innerHTML = Object.entries(pages).map(([route, [label, symbol]]) =>
-    `<a href="#${route}" ${route === currentPage ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${label}</span></a>`).join('');
-  $('#breadcrumb').innerHTML = `<span>Arus</span><i>/</i><strong>${pages[currentPage][0]}</strong>`;
-  $('#profile').innerHTML = `<span class="avatar">${esc((session.user.email || 'P').slice(0, 1).toUpperCase())}</span><span><strong>Akun saya</strong><small>Akun Google</small></span><span aria-hidden="true">›</span>`;
+    `<a href="#${route}" aria-label="${t(label)}" title="${t(label)}" ${route === currentPage ? 'aria-current="page"' : ''}>${icon(symbol)}<span>${t(label)}</span></a>`).join('');
+  $('#breadcrumb').innerHTML = `<span>Arus</span><i>/</i><strong>${t(pages[currentPage][0])}</strong>`;
+  $('#profile').innerHTML = `<span class="avatar">${esc((session.user.email || 'P').slice(0, 1).toUpperCase())}</span><span><strong>${t('Akun saya')}</strong><small>${t('Akun Google')}</small></span><span aria-hidden="true">›</span>`;
   const views = { ringkasan: () => dashboard(state, monthList(), month, chart), transaksi: transactionPage,
-    rekening: () => accountsPage(state), kategori: () => categoriesPage(state), pengaturan: settingsPage };
+    rekening: () => accountsPage(state), kategori: () => categoriesPage(state, categoryGroup, manageGroups), pengaturan: settingsPage };
   $('#main').innerHTML = views[currentPage]();
   if (currentPage === 'transaksi') renderResults();
+  if (fieldId) document.getElementById(fieldId)?.focus({ preventScroll: true });
+  $('#manage-groups')?.addEventListener('toggle', event => {
+    if (event.target.isConnected) manageGroups = event.target.open;
+  });
   refreshStatus();
 }
 function route(page) {
@@ -194,10 +226,14 @@ window.addEventListener('hashchange', () => {
 dialog.addEventListener('close', () => { if (currentPage === 'pengaturan') render(); });
 
 function restorePreview(next) {
-  modal('Pulihkan backup', `<p>Backup berisi <strong>${next.accounts.length} rekening</strong>, <strong>${next.groups.length} kelompok</strong>, dan <strong>${next.transactions.length} transaksi</strong>.</p><p>Pemulihan akan mengganti data akun aktif dan perangkat lain yang tersinkron. Unduh backup yang sekarang jika masih diperlukan.</p>`, () =>
+  modal(t('Pulihkan backup'), `<p>${t('Backup berisi {accounts}, {groups}, dan {transactions}.', {
+    accounts: '<strong>' + t(next.accounts.length === 1 ? '1 rekening' : '{count} rekening', { count: next.accounts.length }) + '</strong>',
+    groups: '<strong>' + t(next.groups.length === 1 ? '1 kelompok' : '{count} kelompok', { count: next.groups.length }) + '</strong>',
+    transactions: '<strong>' + t(next.transactions.length === 1 ? '1 transaksi' : '{count} transaksi', { count: next.transactions.length }) + '</strong>',
+  })}</p><p>${t('Pemulihan akan mengganti data akun aktif dan perangkat lain yang tersinkron. Unduh backup yang sekarang jika masih diperlukan.')}</p>`, () =>
     commit(draft => {
       for (const key of ['accounts', 'groups', 'transactions']) draft[key] = next[key];
-    }, 'Backup dipulihkan.'), 'Ganti data dan pulihkan');
+    }, t('Backup dipulihkan.')), t('Ganti data dan pulihkan'));
 }
 const backupName = () => 'arus-backup-' + today() + '.json';
 $('#file-input').addEventListener('change', async event => {
@@ -227,7 +263,7 @@ async function linkTelegram() {
   const result = await telegram(userId, 'link');
   if (session?.user.id !== userId) return;
   const url = 'https://t.me/' + config.telegramUsername + '?start=' + encodeURIComponent(result.code);
-  modal('Hubungkan Telegram', `<p>Buka Telegram dan tekan <strong>Start</strong>. Tautan berlaku 10 menit dan hanya bisa digunakan sekali.</p><a class="primary direct" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Buka bot Telegram ${icon('arrow', 16)}</a>`, null);
+  modal(t('Hubungkan Telegram'), `<p>${t('Buka Telegram dan tekan {start}. Tautan berlaku 10 menit dan hanya bisa digunakan sekali.', { start: '<strong>Start</strong>' })}</p><a class="primary direct" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${t('Buka bot Telegram')} ${icon('arrow', 16)}</a>`, null);
 }
 function chartUpdate(button, update, selector) {
   update();
@@ -236,7 +272,7 @@ function chartUpdate(button, update, selector) {
 }
 function editTransaction(tx) {
   if (!state.accounts.length) {
-    notify('Tambahkan rekening sebelum mencatat transaksi.');
+    notify(t('Tambahkan rekening sebelum mencatat transaksi.'));
     return accountForm(undefined, commit);
   }
   transactionForm(state, tx, commit);
@@ -244,49 +280,61 @@ function editTransaction(tx) {
 const handlers = {
   close: () => dialog.close(),
   profile: () => route('pengaturan'),
-  settings: () => route('pengaturan'),
   'add-transaction': () => editTransaction(),
   'edit-transaction': button => editTransaction(lookup(state.transactions, button.dataset.id)),
-  'remove-transaction': button => modal('Hapus transaksi?', '<p>Saldo dan laporan akan dihitung ulang setelah transaksi dihapus.</p>', () =>
-    commit(draft => { draft.transactions = draft.transactions.filter(tx => tx.id !== button.dataset.id); }, 'Transaksi dihapus.'), 'Hapus transaksi'),
+  'remove-transaction': button => modal(t('Hapus transaksi?'), `<p>${t('Saldo dan laporan akan dihitung ulang setelah transaksi dihapus.')}</p>`, () =>
+    commit(draft => { draft.transactions = draft.transactions.filter(tx => tx.id !== button.dataset.id); }, t('Transaksi dihapus.')), t('Hapus transaksi')),
   'add-account': () => accountForm(undefined, commit),
   'edit-account': button => accountForm(lookup(state.accounts, button.dataset.id), commit),
   'add-group': () => groupForm(undefined, commit),
   'edit-group': button => groupForm(lookup(state.groups, button.dataset.id), commit),
-  'add-category': button => categoryForm(lookup(state.groups, button.dataset.group), undefined, commit),
+  'add-category': () => categoryForm(state, null, undefined, commit, categoryGroup),
   'edit-category': button => {
     const group = lookup(state.groups, button.dataset.group);
-    if (group) categoryForm(group, lookup(group.categories, button.dataset.id), commit);
+    if (group) categoryForm(state, group, lookup(group.categories, button.dataset.id), commit);
   },
   'all-transactions': () => showTransactions(),
   metric: button => showTransactions({ type: button.dataset.id }),
   'category-transactions': button => showTransactions({ category: button.dataset.id }),
   'account-transactions': button => showTransactions({ account: button.dataset.id, all: true }),
-  'clear-range': () => { delete filters.start; delete filters.end; render(); },
-  'chart-range': button => showTransactions({ start: Number(button.dataset.start), end: Number(button.dataset.end),
-    type: chart.income === chart.expense ? 'cashflow' : chart.income ? 'income' : 'expense' }),
+  'clear-range': () => { delete filters.start; delete filters.end; render(); $('#query')?.focus(); },
+  'clear-filters': () => { clearTimeout(queryTimer); filters = { all: filters.all }; render(); $('#query')?.focus(); },
+  'shift-month': button => {
+    const date = new Date(month + '-01T00:00:00Z');
+    date.setUTCMonth(date.getUTCMonth() + Number(button.dataset.id));
+    const year = date.getUTCFullYear();
+    if (year >= 1 && year <= 9999) updateMonth(date.toISOString().slice(0, 7));
+    $('button[data-action="shift-month"][data-id="' + button.dataset.id + '"]')?.focus();
+  },
+  'chart-range': button => {
+    const { month: selectedMonth, start, end } = button.dataset;
+    month = selectedMonth;
+    showTransactions({
+      ...(start && { start: Number(start), end: Number(end) }),
+      type: chart.income === chart.expense ? 'cashflow' : chart.income ? 'income' : 'expense',
+    });
+  },
   series: button => chartUpdate(button, () => {
     const key = button.dataset.id;
     if ((chart.income && chart.expense) || !chart[key]) chart[key] = !chart[key];
   }),
-  granularity: button => chartUpdate(button, () => { chart.daily = button.dataset.id === 'day'; }),
-  group: button => chartUpdate(button, () => { chart.group = button.dataset.id || ''; }, '.breakdown [data-action="group"]'),
+  granularity: button => chartUpdate(button, () => { chart.monthly = button.dataset.id === 'month'; }),
   csv: () => download(csv(state, transactions()), 'arus-transaksi-' + (filters.all ? 'semua' : month) + '.csv', 'text/csv;charset=utf-8'),
-  xlsx: () => download(xlsx(state, transactions(), filters.all ? 'Semua periode' : monthLabel(month)),
+  xlsx: () => download(xlsx(state, transactions(), filters.all ? t('Semua periode') : monthLabel(month)),
     'arus-transaksi-' + (filters.all ? 'semua' : month) + '.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
   backup: () => download(backup(state), backupName(), 'application/json'),
   import: () => $('#file-input').click(),
   'drive-save': drive.save,
   'drive-restore': drive.restore,
   login,
-  sync: async () => { await synchronize(); if (!syncError && navigator.onLine) notify('Sinkronisasi selesai.'); },
-  'resolve-local': () => modal('Utamakan perubahan lokal?', '<p>Perubahan lokal akan dipakai jika data yang sama juga diedit di perangkat lain.</p>', () => synchronize('local'), 'Gunakan perubahan lokal'),
-  'resolve-remote': () => modal('Muat versi cloud?', '<p>Perubahan lokal yang belum disinkronkan akan dibuang. Unduh backup dulu jika masih diperlukan.</p>', () => synchronize('remote'), 'Muat versi cloud'),
+  sync: async () => { await synchronize(); if (!syncError && navigator.onLine) notify(t('Sinkronisasi selesai.')); },
+  'resolve-local': () => modal(t('Utamakan perubahan lokal?'), `<p>${t('Perubahan lokal akan dipakai jika data yang sama juga diedit di perangkat lain.')}</p>`, () => synchronize('local'), t('Gunakan perubahan lokal')),
+  'resolve-remote': () => modal(t('Muat versi cloud?'), `<p>${t('Perubahan lokal yang belum disinkronkan akan dibuang. Unduh backup dulu jika masih diperlukan.')}</p>`, () => synchronize('remote'), t('Muat versi cloud')),
   logout: () => {
     const userId = session.user.id;
     const key = scope();
     if (record && hasChanges(record)) throw new Error('Sinkronkan dulu sebelum keluar. Perubahan lokal masih menunggu.');
-    modal('Keluar dari akun?', '<p>Salinan cloud di perangkat ini akan dibersihkan.</p>', async () => {
+    modal(t('Keluar dari akun?'), `<p>${t('Salinan cloud di perangkat ini akan dibersihkan.')}</p>`, async () => {
       await serialized(async () => {
         if (hasChanges((await load(key)) || record)) throw new Error('Masih ada perubahan yang menunggu sinkronisasi.');
         await logout(userId);
@@ -298,15 +346,15 @@ const handlers = {
       }, key);
       history.replaceState(null, '', location.pathname);
       render();
-      notify('Anda sudah keluar.');
-    }, 'Keluar');
+      notify(t('Anda sudah keluar.'));
+    }, t('Keluar'));
   },
   'telegram-link': linkTelegram,
   'telegram-unlink': async () => {
     await telegram(session.user.id, 'unlink');
     connectedBot = false;
     render();
-    notify('Tautan Telegram diputus.');
+    notify(t('Tautan Telegram diputus.'));
   },
 };
 document.addEventListener('click', async event => {
@@ -316,15 +364,33 @@ document.addEventListener('click', async event => {
   try { await handlers[button.dataset.action](button); }
   catch (error) { notify(error.message); }
 });
+function updateMonth(value) {
+  month = value;
+  filters.all = false;
+  delete filters.start;
+  delete filters.end;
+  render();
+}
 document.addEventListener('change', event => {
   const field = event.target;
+  if (field.dataset.preference) {
+    setPreference(field.dataset.preference, field.value);
+    if (field.dataset.preference === 'language') {
+      render();
+      document.getElementById(field.id)?.focus();
+    }
+    return;
+  }
+  if (field.id === 'expense-group' || field.id === 'category-group') {
+    if (field.id === 'expense-group') chart.group = field.value;
+    else categoryGroup = field.value;
+    render();
+    document.getElementById(field.id)?.focus();
+    return;
+  }
   const keys = { 'type-filter': 'type', 'account-filter': 'account', 'category-filter': 'category' };
   if (field.id === 'month' && /^\d{4}-\d\d$/.test(field.value)) {
-    month = field.value;
-    filters.all = false;
-    delete filters.start;
-    delete filters.end;
-    render();
+    updateMonth(field.value);
     $('#month')?.focus();
   } else if (field.id === 'all-time') {
     filters.all = field.checked;
@@ -332,7 +398,7 @@ document.addEventListener('change', event => {
     delete filters.end;
     render();
     $('#all-time')?.focus();
-  } else if (Object.hasOwn(keys, field.id)) {
+  } else if (currentPage === 'transaksi' && Object.hasOwn(keys, field.id)) {
     filters[keys[field.id]] = field.value;
     renderResults();
   }
@@ -356,6 +422,7 @@ window.addEventListener('focus', () => {
   if (currentPage === 'pengaturan') void refreshTelegram();
 });
 setInterval(() => { if (document.visibilityState === 'visible' && !dialog.open) void synchronize(); }, 45000);
+render();
 try {
   let loggedIn;
   try { loggedIn = await finishLogin(); }
@@ -368,7 +435,7 @@ try {
     session = active;
   }
   if (loggedIn) authChanges?.postMessage('login');
-} catch (error) { signInError = 'Penyimpanan browser tidak tersedia. ' + error.message; }
+} catch (error) { signInError = 'Penyimpanan browser tidak tersedia.'; }
 openingSession = false;
 render();
 void synchronize();

@@ -17,8 +17,8 @@ export const validLogo = value => typeof value === 'string' && value.length <= m
   /^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
 export const id = () => crypto.randomUUID();
 export const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta' }).format(new Date());
-export const dateLabel = (value, options = { day: 'numeric', month: 'short' }) =>
-  new Date(value + 'T12:00:00Z').toLocaleDateString('id-ID', { ...options, timeZone: 'UTC' });
+export const dateLabel = (value, options = { day: 'numeric', month: 'short' }, locale = 'id-ID') =>
+  new Date(value + 'T12:00:00Z').toLocaleDateString(locale, { ...options, timeZone: 'UTC' });
 
 export const providers = {
   bca: ['BCA', 'bank', '#1762a7'], mandiri: ['Mandiri', 'bank', '#155282'],

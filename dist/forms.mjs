@@ -1,3 +1,4 @@
+import { categoryName, groupName, locale, t } from './preferences.mjs';
 import { accountTypes, categories, formatAmount, id, palettes, parseAmount, providers, today, types, validLogo } from './ledger.mjs';
 import { esc, logo, option } from './views.mjs';
 
@@ -6,11 +7,11 @@ export const dialog = $('#dialog');
 const form = $('#form');
 export const formError = $('#form-error');
 let submitAction;
-export function modal(title, body, submit, label = 'Simpan', extra = '') {
+export function modal(title, body, submit, label, extra = '') {
   $('#dialog-title').textContent = title;
   $('#dialog-body').innerHTML = body;
   formError.textContent = '';
-  $('#dialog-actions').innerHTML = `${extra}<button type="button" class="secondary" data-action="close">${submit ? 'Batal' : 'Tutup'}</button>${submit ? `<button type="submit" class="primary">${label}</button>` : ''}`;
+  $('#dialog-actions').innerHTML = `${extra}<button type="button" class="secondary" data-action="close">${submit ? t('Batal') : t('Tutup')}</button>${submit ? `<button type="submit" class="primary">${label ?? t('Simpan')}</button>` : ''}`;
   submitAction = submit;
   if (!dialog.open) dialog.showModal();
   dialog.querySelector('input:not([type=checkbox]),select')?.focus();
@@ -23,13 +24,13 @@ form.addEventListener('submit', async event => {
   try {
     await submitAction(new FormData(form));
     dialog.close();
-  } catch (error) { formError.textContent = error.message; }
+  } catch (error) { formError.textContent = t(error.message); }
   finally { button.disabled = false; }
 });
 const input = (name, label, value = '', max = 80, required = true) =>
-  `<label>${label}<input name="${name}" value="${esc(value)}" maxlength="${max}" ${required ? 'required' : ''}></label>`;
+  `<label>${t(label)}<input name="${name}" value="${esc(value)}" maxlength="${max}" ${required ? 'required' : ''}></label>`;
 const amountField = (name, label, value = '', signed = false) =>
-  `<label>${label}<input name="${name}" type="text" inputmode="${signed ? 'text' : 'numeric'}" data-rupiah autocomplete="off" value="${esc(formatAmount(value))}" required></label>`;
+  `<label>${t(label)}<input name="${name}" type="text" inputmode="${signed ? 'text' : 'numeric'}" data-rupiah autocomplete="off" value="${esc(formatAmount(value))}" required></label>`;
 form.addEventListener('input', event => {
   const input = event.target;
   if (!input.hasAttribute('data-rupiah') || event.isComposing) return;
@@ -44,8 +45,8 @@ form.addEventListener('input', event => {
   input.value = formatted;
   input.setSelectionRange(position, position);
 });
-const check = (name, label, checked) => `<label class="check"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}>${label}</label>`;
-export const select = (name, label, options) => `<label>${label}<select name="${name}" required>${options}</select></label>`;
+const check = (name, label, checked) => `<label class="check"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}>${t(label)}</label>`;
+export const select = (name, label, options) => `<label>${t(label)}<select name="${name}" required>${options}</select></label>`;
 const field = name => form.elements.namedItem(name);
 function upsert(items, value) {
   const index = items.findIndex(item => item.id === value.id);
@@ -53,11 +54,11 @@ function upsert(items, value) {
   else items[index] = value;
 }
 export function transactionForm(state, tx, commit) {
-  const typeOptions = Object.entries(types).map(([key, label]) => option(key, label, tx?.type || 'expense')).join('');
+  const typeOptions = Object.entries(types).map(([key, label]) => option(key, t(label), tx?.type || 'expense')).join('');
   const accounts = state.accounts.map(item => option(item.id, item.name, tx?.account)).join('');
-  modal(tx ? 'Edit transaksi' : 'Tambah transaksi', `<div class="form-grid">${select('type', 'Jenis', typeOptions)}
+  modal(tx ? t('Edit transaksi') : t('Tambah transaksi'), `<div class="form-grid">${select('type', 'Jenis', typeOptions)}
     ${amountField('amount', 'Nominal (Rp)', tx?.amount)}
-    <label>Tanggal<input type="date" name="date" value="${tx?.date || today()}" required></label>
+    <label>${t('Tanggal')}<input type="date" name="date" value="${tx?.date || today()}" required></label>
     ${select('account', 'Rekening', accounts)}<div id="transaction-fields" class="wide"></div>
     <div class="wide">${input('note', 'Catatan (opsional)', tx?.note, 160, false)}</div></div>`, async data => {
     const type = data.get('type');
@@ -66,7 +67,7 @@ export function transactionForm(state, tx, commit) {
       to: type === 'transfer' ? data.get('to') : '', salary: data.has('salary'),
       note: data.get('note').trim(), created: tx?.created || new Date().toISOString() };
     await commit(draft => upsert(draft.transactions, next), 'Transaksi disimpan.');
-  }, 'Simpan', tx ? `<button type="button" class="danger" data-action="remove-transaction" data-id="${tx.id}">Hapus</button>` : '');
+  }, undefined, tx ? `<button type="button" class="danger" data-action="remove-transaction" data-id="${tx.id}">${t('Hapus')}</button>` : '');
   const fields = $('#transaction-fields');
   const type = field('type');
   const account = field('account');
@@ -77,12 +78,13 @@ export function transactionForm(state, tx, commit) {
     selectedCategory = field('category')?.value || selectedCategory;
     target = field('to')?.value || target;
     markedSalary = field('salary')?.checked ?? markedSalary;
-    const active = categories(state).filter(item => item.id === tx?.category || (!item.archived && !item.group.archived));
+    const active = categories(state).filter(item => item.id === tx?.category || (!item.archived && !item.group.archived))
+      .sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale()));
     fields.innerHTML = type.value === 'transfer' ? select('to', 'Rekening tujuan',
-      option('', 'Pilih rekening tujuan', target) + state.accounts.filter(item => item.id !== account.value).map(item => option(item.id, item.name, target)).join('')) :
+      option('', t('Pilih rekening tujuan'), target) + state.accounts.filter(item => item.id !== account.value).map(item => option(item.id, item.name, target)).join('')) :
       (type.value === 'expense' ? select('category', 'Kategori pengeluaran',
-        option('', 'Pilih kategori', selectedCategory) + active.map(item => option(item.id, item.group.name + ' → ' + item.name, selectedCategory)).join('')) : '') +
-      check('salary', type.value === 'income' ? 'Pemasukan ini adalah gaji' : 'Pengeluaran ini dari gaji', markedSalary);
+        option('', t('Pilih kategori'), selectedCategory) + active.map(item => option(item.id, categoryName(item), selectedCategory)).join('')) : '') +
+      check('salary', type.value === 'income' ? t('Pemasukan ini adalah gaji') : t('Pengeluaran ini dari gaji'), markedSalary);
   }
   type.addEventListener('change', update);
   account.addEventListener('change', update);
@@ -113,15 +115,15 @@ async function resizeLogo(file) {
 export function accountForm(account, commit) {
   const names = Object.entries(accountTypes).map(([key, label]) => option(key, label, account?.type || 'bank')).join('');
   let customLogo = account?.logo;
-  modal(account ? 'Edit rekening' : 'Tambah rekening', `<div class="form-grid">${select('accountType', 'Jenis rekening', names)}
-    <label id="provider-field">Penyedia<select name="provider"></select></label>
+  modal(account ? t('Edit rekening') : t('Tambah rekening'), `<div class="form-grid">${select('accountType', 'Jenis rekening', names)}
+    <label id="provider-field">${t('Penyedia')}<select name="provider"></select></label>
     <div class="wide" id="custom-provider-field" hidden>${input('customProvider', 'Nama penyedia', account?.customProvider)}</div>
     ${input('name', 'Nama rekening', account?.name)}
     ${amountField('opening', 'Saldo awal (Rp)', account?.opening ?? 0, true)}
     <div class="wide provider-field">
-      <span id="provider-logo" aria-label="Pratinjau logo"></span>
-      <label>Logo kustom<input type="file" name="logoFile" accept="image/png,image/jpeg,image/webp"><small>PNG, JPG, atau WebP · Maks. 5 MB</small></label>
-      <button type="button" id="remove-logo" class="secondary small" hidden>Hapus logo kustom</button>
+      <span id="provider-logo" aria-label="${t('Pratinjau logo')}"></span>
+      <label>${t('Logo kustom')}<input type="file" name="logoFile" accept="image/png,image/jpeg,image/webp"><small>${t('PNG, JPG, atau WebP · Maks. 5 MB')}</small></label>
+      <button type="button" id="remove-logo" class="secondary small" hidden>${t('Hapus logo kustom')}</button>
     </div>
     <div class="wide">${check('savings', 'Tandai sebagai tabungan', account?.savings)}</div></div>`, async data => {
     const selected = data.get('provider');
@@ -152,8 +154,8 @@ export function accountForm(account, commit) {
   function update(selected) {
     provider.disabled = type.value === 'cash';
     $('#provider-field').hidden = provider.disabled;
-    provider.innerHTML = option('', 'Tanpa penyedia', selected) + Object.entries(providers).filter(([, value]) => value[1] === type.value)
-      .map(([key, value]) => option(key, value[0], selected)).join('') + option('custom', 'Ketik penyedia sendiri', selected);
+    provider.innerHTML = option('', t('Tanpa penyedia'), selected) + Object.entries(providers).filter(([, value]) => value[1] === type.value)
+      .map(([key, value]) => option(key, value[0], selected)).join('') + option('custom', t('Ketik penyedia sendiri'), selected);
     if (!name.value && type.value === 'cash') name.value = 'Cash';
     providerChanged();
   }
@@ -194,22 +196,45 @@ export function accountForm(account, commit) {
   });
 }
 export function groupForm(group, commit) {
-  modal(group ? 'Edit kelompok' : 'Tambah kelompok', input('name', 'Nama kelompok', group?.name) +
-    (group ? select('color', 'Warna', palettes.map((color, index) => option(color, ['Mint', 'Ungu', 'Kuning', 'Biru', 'Merah muda', 'Hijau'][index], group.color)).join('')) +
+  modal(group ? t('Edit kelompok') : t('Tambah kelompok'), input('name', 'Nama kelompok', group ? groupName(group) : '') +
+    (group ? select('color', 'Warna', palettes.map((color, index) => option(color, t(['Mint', 'Ungu', 'Kuning', 'Biru', 'Merah muda', 'Hijau'][index]), group.color)).join('')) +
       check('archived', 'Arsipkan kelompok', group.archived) : ''), async data => {
     await commit(draft => {
       const current = draft.groups.find(item => item.id === group?.id);
-      upsert(draft.groups, { id: group?.id || id(), name: data.get('name').trim(),
+      const name = data.get('name').trim();
+      upsert(draft.groups, { id: group?.id || id(), name: group && name === groupName(group) ? group.name : name,
         color: data.get('color') || palettes[draft.groups.length % palettes.length], categories: current?.categories || [],
         archived: data.has('archived') });
     }, 'Kelompok disimpan.');
   });
 }
-export function categoryForm(group, category, commit) {
-  if (!group) return;
-  modal(category ? 'Edit kategori' : 'Tambah kategori', `<p class="muted">Kelompok ${esc(group.name)}</p>` +
-    input('name', 'Nama kategori', category?.name) + (category ? check('archived', 'Arsipkan kategori', category.archived) : ''), async data => {
-    await commit(draft => upsert(draft.groups.find(item => item.id === group.id).categories,
-      { id: category?.id || id(), name: data.get('name').trim(), archived: data.has('archived') }), 'Kategori disimpan.');
+export function categoryForm(state, group, category, commit, selectedGroup = '') {
+  const general = item => !item.archived && item.name === 'Lainnya' && (item.id === 'other' || item.id.startsWith('general-'));
+  const groups = state.groups.filter(item => !general(item) && (!item.archived || group?.id === item.id));
+  const currentGroup = group ? (general(group) ? '' : group.id) : groups.some(item => item.id === selectedGroup) ? selectedGroup : '';
+  modal(category ? t('Edit kategori') : t('Tambah kategori'),
+    input('name', 'Nama kategori', category ? categoryName(category) : '') +
+    select('group', 'Kelompok (opsional)', option(':general', t('Tanpa kelompok khusus'), currentGroup || ':general') +
+      groups.map(item => option(item.id, groupName(item), currentGroup)).join('')) +
+    (category ? check('archived', 'Arsipkan kategori', category.archived) : ''), async data => {
+    await commit(draft => {
+      const selected = data.get('group');
+      let destination = draft.groups.find(item => item.id === selected);
+      if (selected === ':general') {
+        destination = draft.groups.find(item => item.id === group?.id && general(item)) || draft.groups.find(general);
+      }
+      if (selected === ':general' && !destination) {
+        destination = { id: draft.groups.some(item => item.id === 'other') ? 'general-' + id() : 'other',
+          name: 'Lainnya', color: palettes[2], categories: [] };
+        draft.groups.push(destination);
+      }
+      if (!destination) throw new Error('Kelompok tidak ditemukan.');
+      const previous = draft.groups.find(item => item.id === group?.id);
+      const name = data.get('name').trim();
+      const value = { id: category?.id || id(), name: category && name === categoryName(category) ? category.name : name,
+        archived: data.has('archived') };
+      if (previous && previous !== destination) previous.categories = previous.categories.filter(item => item.id !== value.id);
+      upsert(destination.categories, value);
+    }, 'Kategori disimpan.');
   });
 }

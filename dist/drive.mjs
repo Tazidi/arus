@@ -1,3 +1,4 @@
+import { locale, t } from './preferences.mjs';
 import { id } from './ledger.mjs';
 import { parseBackup } from './exports.mjs';
 import { dialog, formError, modal, select } from './forms.mjs';
@@ -37,7 +38,7 @@ export function createDriveActions(config, snapshot, restorePreview, notify) {
       await request(token, 'upload/drive/v3/files?uploadType=multipart', {
         method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body,
       });
-      notify('Backup tersimpan di Google Drive.');
+      notify(t('Backup tersimpan di Google Drive.'));
     },
     async restore() {
       const token = await authorize();
@@ -51,10 +52,10 @@ export function createDriveActions(config, snapshot, restorePreview, notify) {
         files.push(...(result.files || []));
         page = result.nextPageToken;
       } while (page);
-      if (!files.length) return notify('Belum ada backup Arus di Google Drive ini.');
-      modal('Pilih backup Google Drive', select('file', 'File backup', files.map(file =>
-        option(file.id, file.name + ' · ' + new Date(file.createdTime).toLocaleString('id-ID'))).join('')), null);
-      document.querySelector('#dialog-actions').insertAdjacentHTML('beforeend', '<button type="button" class="primary" id="drive-preview">Pratinjau</button>');
+      if (!files.length) return notify(t('Belum ada backup Arus di Google Drive ini.'));
+      modal(t('Pilih backup Google Drive'), select('file', 'File backup', files.map(file =>
+        option(file.id, file.name + ' · ' + new Date(file.createdTime).toLocaleString(locale()))).join('')), null);
+      document.querySelector('#dialog-actions').insertAdjacentHTML('beforeend', `<button type="button" class="primary" id="drive-preview">${t('Pratinjau')}</button>`);
       document.querySelector('#drive-preview').addEventListener('click', async event => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -63,7 +64,7 @@ export function createDriveActions(config, snapshot, restorePreview, notify) {
           if (Number(file.size) > 20 * 1024 * 1024) throw new Error('Ukuran file melebihi 20 MB.');
           const value = await request(token, 'drive/v3/files/' + encodeURIComponent(file.id) + '?alt=media');
           if (dialog.open && button.isConnected) restorePreview(parseBackup(JSON.stringify(value)));
-        } catch (error) { formError.textContent = error.message; }
+        } catch (error) { formError.textContent = t(error.message); }
         finally { button.disabled = false; }
       });
     },

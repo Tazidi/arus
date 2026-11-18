@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#111820">
+  <meta name="theme-color" content="#e8dfce">
   <meta name="description" content="Catat pemasukan, pengeluaran, dan saldo rekening pribadi dalam rupiah.">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.png">
+  <script src="./theme.js"></script>
   <link rel="stylesheet" href="./styles.css">
   <title>Arus · Money Tracker</title>
 </head>
@@ -14,20 +15,21 @@
   <main id="sign-in" class="sign-in">
     <section class="card sign-in-card" aria-labelledby="sign-in-title">
       <div class="brand"><img src="./icon.png" width="36" height="36" alt=""><span>arus<span class="brand-dot">.</span></span></div>
-      <h1 id="sign-in-title">Masuk ke Arus</h1>
-      <p>Gunakan akun Google untuk membuka catatan keuangan Anda.</p>
-      <button class="primary" data-action="login" id="google-login" disabled>Masuk dengan Google</button>
+      <h1 id="sign-in-title" data-text="Masuk ke Arus">Masuk ke Arus</h1>
+      <p data-text="Gunakan akun Google untuk membuka catatan keuangan Anda.">Gunakan akun Google untuk membuka catatan keuangan Anda.</p>
+      <button class="primary" data-action="login" id="google-login" data-text="Masuk dengan Google" disabled>Masuk dengan Google</button>
       <p id="sign-in-status" role="status">Memeriksa sesi…</p>
+      <div id="sign-in-preferences"></div>
     </section>
   </main>
   <div class="shell" id="authenticated-app" hidden>
     <aside class="sidebar">
-      <a class="brand" href="#ringkasan"><img src="./icon.png" width="36" height="36" alt=""><span>arus<span class="brand-dot">.</span><small>Money Tracker</small></span></a>
+      <a class="brand" href="#ringkasan" aria-label="Arus"><img src="./icon.png" width="36" height="36" alt=""><span>arus<span class="brand-dot">.</span></span></a>
       <nav aria-label="Navigasi utama" id="nav"></nav>
       <div class="sidebar-bottom"><div id="sync-status" class="sync" aria-live="polite"></div><button class="profile" data-action="profile" id="profile"></button></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><span id="breadcrumb"></span><div class="top-actions"><button class="secondary" data-action="settings">Akun Google</button><button class="primary" data-action="add-transaction"><span aria-hidden="true">＋</span> <span>Tambah transaksi</span></button></div></header>
+      <header class="topbar"><span id="breadcrumb"></span><div class="top-actions"><button class="primary" data-action="add-transaction"><span aria-hidden="true">＋</span> <span data-text="Tambah transaksi">Tambah transaksi</span></button></div></header>
       <div id="mobile-sync-status" class="sync mobile-sync" aria-live="polite" hidden></div>
       <main id="main" tabindex="-1"></main>
     </div>
