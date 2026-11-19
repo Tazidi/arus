@@ -1,3 +1,4 @@
+import { installCategoryCatalog } from './category-catalog.mjs';
 import { config } from './config.mjs';
 import { initial, validate } from './ledger.mjs';
 
@@ -166,7 +167,7 @@ export async function sync(expectedId, record, strategy) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const [row] = await api(path + filter + '&select=revision,state', { token });
     const remote = row ? validate(row.state) : initial();
-    const next = strategy === 'remote' ? remote : merge(record.base, record.state, remote, strategy === 'local');
+    const next = installCategoryCatalog(strategy === 'remote' ? remote : merge(record.base, record.state, remote, strategy === 'local'));
     if (row && same(remote, next)) return { state: remote, base: remote };
     const updated = await api(row ? path + filter + '&revision=eq.' + row.revision : path, {
       method: row ? 'PATCH' : 'POST', token,

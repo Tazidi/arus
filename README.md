@@ -8,7 +8,7 @@ Arus adalah aplikasi pencatatan keuangan pribadi dalam rupiah. Masuk dengan Goog
 
 - Catat pemasukan, gaji, pengeluaran, dan transfer antar rekening. Nominal seperti `10000` otomatis tampil sebagai `10.000` saat diketik.
 - Kelola rekening bank, e-wallet, uang tunai, dan tabungan. Pilih logo dari katalog atau tambahkan nama penyedia dan logo sendiri.
-- Pilih kategori pengeluaran seperti **Makan** atau **Transportasi**. Kelompok seperti **Kebutuhan** dan **Keinginan** tersedia sebagai filter opsional di ringkasan.
+- Pilih kategori pengeluaran dengan ikon dan contoh, seperti **Makan & Minum** atau **Transportasi**. Tambahkan kategori sendiri, termasuk ikon dan contoh opsional, lewat menu **Kategori**.
 - Pilih tema **Sistem**, **Gelap**, atau **Terang** dan bahasa **Indonesia** atau **Inggris** di **Pengaturan → Tampilan**.
 - Lihat total saldo, sisa gaji, dan grafik arus kas mingguan untuk bulan terpilih atau bulanan untuk tahun terpilih. Klik grafik untuk melihat transaksi yang terkait.
 - Catat pinjaman dan tagihan bulanan di menu **Tagihan**. Lihat sisa pinjaman, jatuh tempo, dan riwayat pembayaran. Untuk tagihan dengan jangka waktu tertentu, isi durasi dan atur nominal tiap bulan di **Rincian per bulan**. Pembayaran yang dicatat masuk ke transaksi pengeluaran.
@@ -25,9 +25,11 @@ Arus adalah aplikasi pencatatan keuangan pribadi dalam rupiah. Masuk dengan Goog
 
 ## Cara menggunakan Telegram
 
-Di Arus, buka **Pengaturan → Hubungkan Telegram**, lalu tekan **Start** di chat pribadi dengan [@Arus1_bot](https://t.me/Arus1_bot). Setelah tertaut, ketik `/menu`. Misalnya, pilih **Catat Pemasukan**, balas pesan bot dengan `BCA 500.000`, lalu tekan **Simpan** pada pratinjau.
+Di Arus, buka **Pengaturan → Hubungkan Telegram**, lalu tekan **Start** di chat pribadi dengan [@Arus1_bot](https://t.me/Arus1_bot). Setelah tertaut, `/start` menampilkan petunjuk singkat. Pilih **Catat Pengeluaran**, tekan tombol kategori, ketik nominal, lalu pilih rekening jika ada beberapa. Periksa pratinjau dan tekan **Simpan**. Opsi **Dari gaji** ada di pratinjau pengeluaran. Pilihan pemasukan, gaji, dan transfer juga memandu pencatatan melalui tombol.
 
-Jika kategori belum dikenali tetapi rekening dan nominal jelas, pilih **Pilih kategori** atau **Simpan untuk ditinjau** di Telegram. Untuk meninjau nanti, buka **Transaksi → Perlu kategori** di web dan simpan transaksi dengan kategori yang dipilih.
+Nominal bisa ditulis singkat, misalnya `12k` untuk Rp12.000 dan `12.5k` atau `12,5k` untuk Rp12.500. Cara cepat seperti `makan tunai 12.5k` tetap tersedia.
+
+Ketik `jajan` untuk melihat saran kategori sebelum mengetik nominal, atau pakai format cepat `jajan tunai 12.5k` untuk melihat saran di pratinjau. Jika kategori belum dikenali tetapi rekening dan nominal jelas, pilih **Pilih kategori** atau **Simpan untuk ditinjau** di Telegram. Untuk meninjau nanti, buka **Transaksi → Perlu kategori** di web dan simpan transaksi dengan kategori yang dipilih.
 
 | Untuk | Contoh pesan langsung |
 |---|---|

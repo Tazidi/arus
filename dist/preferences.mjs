@@ -1,3 +1,4 @@
+import { catalogExamples, catalogLabel } from './category-catalog.mjs';
 import { english } from './translations.mjs';
 
 function stored(key) {
@@ -20,11 +21,11 @@ export function setPreference(key, value) {
   if (key === 'theme') window.dispatchEvent(new CustomEvent('arus:theme', { detail: theme }));
 }
 
-const categoryDefaults = {
-  food: 'Makan', transport: 'Transportasi', bills: 'Tagihan', groceries: 'Belanja bulanan',
-  shopping: 'Belanja', fun: 'Hiburan', subs: 'Langganan', misc: 'Lain-lain',
-};
 const groupDefaults = { needs: 'Kebutuhan', wants: 'Keinginan', other: 'Lainnya' };
 
-export const categoryName = item => categoryDefaults[item.id] === item.name ? t(item.name) : item.name;
+export const categoryName = item => catalogLabel(item) ? t(catalogLabel(item)) : item.name;
+export const categoryExamples = item => {
+  const examples = catalogExamples(item);
+  return catalogLabel(item) ? t(examples) : examples;
+};
 export const groupName = item => (groupDefaults[item.id] || (item.id.startsWith('general-') && 'Lainnya')) === item.name ? t(item.name) : item.name;

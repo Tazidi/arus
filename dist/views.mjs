@@ -1,4 +1,5 @@
-import { categoryName, groupName, locale, t } from './preferences.mjs';
+import { catalogIcon, isDefaultGroup } from './category-catalog.mjs';
+import { categoryExamples, categoryName, groupName, locale, t } from './preferences.mjs';
 import { accountTypes, balances, billPeriodAt, categories, categoryReviewFilter, dateLabel, newest, obligationProgress, providers, rupiah, today, totals, types, validLogo } from './ledger.mjs';
 
 const paths = {
@@ -50,7 +51,7 @@ export function table(state, list, limit = 0) {
     const reviewLabel = tx.needsCategory ? t('Perlu kategori') : '';
     const accountLabel = esc(account?.name) + (tx.type === 'transfer' ? ' → ' + esc(accountMap.get(tx.to)?.name) : '');
     const label = tx.note || (category ? categoryName(category) : '') || (tx.salary && tx.type === 'income' ? t('Gaji') : t(types[tx.type]));
-    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${reviewLabel ? ' · ' + reviewLabel : category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><i style="--dot:${category.group.color}"></i>${esc(categoryName(category))}</span>` : reviewLabel ? `<span class="category-review">${reviewLabel}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t('Edit {name}', { name: label }))}">${icon('edit', 16)}</button></td></tr>`;
+    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${reviewLabel ? ' · ' + reviewLabel : category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><span aria-hidden="true">${esc(catalogIcon(category))}</span>${esc(categoryName(category))}</span>` : reviewLabel ? `<span class="category-review">${reviewLabel}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t('Edit {name}', { name: label }))}">${icon('edit', 16)}</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -111,14 +112,14 @@ function expenses(state, list, selectedGroup) {
     sums.set(key, (sums.get(key) || 0) + tx.amount);
   }
   const items = categories(state).filter(item => sums.has(item.id) && (!selectedGroup || item.group.id === selectedGroup))
-    .map(item => ({ id: item.id, label: categoryName(item), value: sums.get(item.id) }));
+    .map(item => ({ id: item.id, label: categoryName(item), icon: catalogIcon(item), value: sums.get(item.id) }));
   if (!selectedGroup && sums.has(categoryReviewFilter)) {
     items.push({ id: categoryReviewFilter, label: t('Perlu kategori'), value: sums.get(categoryReviewFilter) });
   }
   items.sort((left, right) => right.value - left.value);
   const subtotal = items.reduce((sum, item) => sum + item.value, 0);
-  const groups = state.groups.filter(group => !group.archived || group.id === selectedGroup ||
-    group.categories.some(category => sums.has(category.id)));
+  const groups = state.groups.filter(group => !isDefaultGroup(group) && (!group.archived || group.id === selectedGroup ||
+    group.categories.some(category => sums.has(category.id))));
 
   return `<section class="card breakdown">
     <div class="card-head"><div><h2>${t('Pengeluaran per kategori')}</h2><p>${t('Total pengeluaran')}</p><strong class="breakdown-total">${rupiah(subtotal)}</strong></div>
@@ -126,7 +127,7 @@ function expenses(state, list, selectedGroup) {
     <div class="breakdown-list">${items.length ? items.map(item => {
       const share = item.value / subtotal * 100;
       return `<button data-action="category-transactions" data-id="${item.id}">
-        <span class="breakdown-row"><span><i></i>${esc(item.label)}</span><strong>${rupiah(item.value)}</strong></span>
+        <span class="breakdown-row"><span>${item.icon ? `<span aria-hidden="true">${esc(item.icon)}</span>` : '<i></i>'}${esc(item.label)}</span><strong>${rupiah(item.value)}</strong></span>
         <span class="category-meter" aria-hidden="true"><i style="--share:${share}%"></i></span>
       </button>`;
     }).join('') : `<p class="muted">${t('Belum ada pengeluaran.')}</p>`}</div>
@@ -158,19 +159,20 @@ export function accountsPage(state) {
 }
 
 export function categoriesPage(state, selectedGroup, manageGroups) {
+  const groups = state.groups.filter(group => !isDefaultGroup(group));
   const items = categories(state).filter(item => !selectedGroup || item.group.id === selectedGroup)
     .sort((left, right) => Number(!!(left.archived || left.group.archived)) - Number(!!(right.archived || right.group.archived)) ||
       categoryName(left).localeCompare(categoryName(right), locale()));
   return `<div class="page-intro"><div><h1>${t('Kategori')}</h1><p>${t('Kelola kategori yang digunakan untuk mencatat pengeluaran.')}</p></div>
     <button class="secondary" data-action="add-category">＋ ${t('Tambah kategori')}</button></div>
     <section class="card category-panel"><div class="card-head"><h2>${t('Daftar kategori')}</h2>
-      ${state.groups.length ? `<select class="group-filter" id="category-group" aria-label="${t('Filter kelompok')}">${option('', t('Semua kelompok'), selectedGroup)}${state.groups.map(group => option(group.id, groupName(group), selectedGroup)).join('')}</select>` : ''}</div>
+      ${groups.length ? `<select class="group-filter" id="category-group" aria-label="${t('Filter kelompok')}">${option('', t('Semua kelompok'), selectedGroup)}${groups.map(group => option(group.id, groupName(group), selectedGroup)).join('')}</select>` : ''}</div>
       ${items.length ? `<div class="category-directory">${items.map(item => `<button data-action="edit-category" data-id="${item.id}" data-group="${item.group.id}">
-        <i class="dot" style="--dot:${item.group.color}"></i><span><strong>${esc(categoryName(item))}</strong>${item.archived || item.group.archived ? `<small>${t('Diarsipkan')}</small>` : ''}</span>${icon('edit', 16)}</button>`).join('')}</div>`
+        <span class="category-icon" aria-hidden="true">${esc(catalogIcon(item))}</span><span class="category-copy"><strong>${esc(categoryName(item))}</strong>${categoryExamples(item) ? `<small>${esc(categoryExamples(item))}</small>` : ''}${item.archived || item.group.archived ? `<small>${t('Diarsipkan')}</small>` : ''}</span>${icon('edit', 16)}</button>`).join('')}</div>`
         : empty('Belum ada kategori', 'Tambahkan kategori untuk mengelompokkan pengeluaran.', null, null, 'categories')}</section>
     <details class="card group-manager" id="manage-groups" ${manageGroups ? 'open' : ''}><summary>${t('Kelola kelompok')}</summary>
       <div class="group-controls"><p class="muted">${t('Kelompok bersifat opsional dan bisa dipakai untuk memfilter ringkasan.')}</p>
-      <div class="category-rows">${state.groups.map(group => `<button data-action="edit-group" data-id="${group.id}">
+      <div class="category-rows">${groups.map(group => `<button data-action="edit-group" data-id="${group.id}">
         <span><i class="dot" style="--dot:${group.color}"></i>${esc(groupName(group))} ${group.archived ? `<small>${t('Diarsipkan')}</small>` : ''}</span>${icon('edit', 16)}</button>`).join('')}</div>
       <button class="secondary small" data-action="add-group">＋ ${t('Tambah kelompok')}</button></div></details>`;
 }

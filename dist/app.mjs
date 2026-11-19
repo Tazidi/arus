@@ -1,3 +1,4 @@
+import { isDefaultGroup } from './category-catalog.mjs';
 import { categoryName, groupName, language, locale, setPreference, t, theme } from './preferences.mjs';
 import { config } from './config.mjs';
 import { billMonthIndex, billPeriodAt, categories, categoryReviewFilter, initial, obligationProgress, today, types, validate } from './ledger.mjs';
@@ -192,8 +193,9 @@ function render() {
     refreshStatus();
     return;
   }
-  if (!lookup(state.groups, chart.group)) chart.group = '';
-  if (!lookup(state.groups, categoryGroup)) categoryGroup = '';
+  const customGroups = state.groups.filter(group => !isDefaultGroup(group));
+  if (!lookup(customGroups, chart.group)) chart.group = '';
+  if (!lookup(customGroups, categoryGroup)) categoryGroup = '';
   const hash = location.hash.slice(1);
   const nextPage = Object.hasOwn(pages, hash) ? hash : 'ringkasan';
   const fieldId = nextPage === currentPage && $('#main').contains(document.activeElement) ? document.activeElement.id : '';

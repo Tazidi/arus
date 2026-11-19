@@ -1,3 +1,5 @@
+import { categoryIcons, defaultCategories } from './category-catalog.mjs';
+
 export const rupiah = value => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
 export const integer = value => Number.isSafeInteger(value) && Math.abs(value) <= 1e12;
 export function formatAmount(value) {
@@ -31,16 +33,7 @@ export const providers = {
 
 export const initial = () => ({
   accounts: [],
-  groups: [
-    { id: 'needs', name: 'Kebutuhan', color: '#63e6bd', categories: [
-      { id: 'food', name: 'Makan' }, { id: 'transport', name: 'Transportasi' },
-      { id: 'bills', name: 'Tagihan' }, { id: 'groceries', name: 'Belanja bulanan' },
-    ] },
-    { id: 'wants', name: 'Keinginan', color: '#9d91ff', categories: [
-      { id: 'shopping', name: 'Belanja' }, { id: 'fun', name: 'Hiburan' }, { id: 'subs', name: 'Langganan' },
-    ] },
-    { id: 'other', name: 'Lainnya', color: '#ffc578', categories: [{ id: 'misc', name: 'Lain-lain' }] },
-  ],
+  groups: [{ id: 'other', name: 'Lainnya', color: '#ffc578', categories: defaultCategories() }],
   transactions: [],
   obligations: [],
 });
@@ -127,7 +120,10 @@ export function validate(state) {
   }
   for (const group of state.groups) {
     if (!validName(group.name) || !palettes.includes(group.color) || !validList(group.categories) ||
-      !group.categories.every(category => validName(category.name))) fail();
+      !group.categories.every(category => validName(category.name) &&
+        (category.icon === undefined || categoryIcons.includes(category.icon)) &&
+        (category.examples === undefined || (typeof category.examples === 'string' && category.examples.length <= 180)) &&
+        (category.aliases === undefined || (Array.isArray(category.aliases) && category.aliases.every(validName))))) fail();
   }
   const accounts = new Set(state.accounts.map(account => account.id));
   const allCategories = categories(state);

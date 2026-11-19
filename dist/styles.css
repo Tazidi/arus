@@ -334,3 +334,9 @@ nav a[aria-current=page] { font-weight: 720; }
 .bill-period dt { color: var(--muted); font-size: 12px; }
 .bill-period dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
 .bill-period button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+
+.category-directory button > .category-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 8px; background: var(--accent-soft); font-size: 18px; }
+.category-directory .category-copy { flex: 1; min-width: 0; }
+.category-directory .category-copy small { font-size: 11px; line-height: 1.35; }
+
+#category-example:not([hidden]) { display: block; margin-top: 5px; }

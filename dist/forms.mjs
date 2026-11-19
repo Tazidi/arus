@@ -1,4 +1,5 @@
-import { categoryName, groupName, locale, t } from './preferences.mjs';
+import { catalogIcon, categoryIconLabels, categoryIcons, generalGroup, isDefaultGroup } from './category-catalog.mjs';
+import { categoryExamples, categoryName, groupName, locale, t } from './preferences.mjs';
 import { accountTypes, billMonthIndex, billPeriodAt, categories, formatAmount, id, palettes, parseAmount, providers, recordObligationPayment, today, types, validLogo } from './ledger.mjs';
 import { esc, logo, monthLabel, option } from './views.mjs';
 
@@ -95,8 +96,20 @@ export function transactionForm(state, tx, commit) {
     fields.innerHTML = type.value === 'transfer' ? select('to', 'Rekening tujuan',
       option('', t('Pilih rekening tujuan'), target) + state.accounts.filter(item => item.id !== account.value).map(item => option(item.id, item.name, target)).join('')) :
       (type.value === 'expense' ? select('category', 'Kategori pengeluaran',
-        option('', t('Pilih kategori'), selectedCategory) + active.map(item => option(item.id, categoryName(item), selectedCategory)).join('')) : '') +
+        option('', t('Pilih kategori'), selectedCategory) + active.map(item => option(item.id, categoryName(item), selectedCategory)).join('')) + '<small id="category-example"></small>' : '') +
       check('salary', type.value === 'income' ? t('Pemasukan ini adalah gaji') : t('Pengeluaran ini dari gaji'), markedSalary);
+    const example = $('#category-example');
+    if (example) {
+      const category = field('category');
+      const showExample = () => {
+        const item = active.find(item => item.id === category.value);
+        const examples = item ? categoryExamples(item) : '';
+        example.hidden = !examples;
+        example.textContent = examples ? t('Contoh: {examples}', { examples }) : '';
+      };
+      category.addEventListener('change', showExample);
+      showExample();
+    }
   }
   type.addEventListener('change', update);
   account.addEventListener('change', update);
@@ -221,30 +234,34 @@ export function groupForm(group, commit) {
   });
 }
 export function categoryForm(state, group, category, commit, selectedGroup = '') {
-  const general = item => !item.archived && item.name === 'Lainnya' && (item.id === 'other' || item.id.startsWith('general-'));
-  const groups = state.groups.filter(item => !general(item) && (!item.archived || group?.id === item.id));
-  const currentGroup = group ? (general(group) ? '' : group.id) : groups.some(item => item.id === selectedGroup) ? selectedGroup : '';
+  const customGroups = state.groups.filter(item => !isDefaultGroup(item) && (!item.archived || group?.id === item.id));
+  const selected = group?.id || selectedGroup;
+  const currentGroup = customGroups.some(item => item.id === selected) ? selected : ':general';
+  const icons = categoryIcons.map((symbol, index) =>
+    option(symbol, symbol + ' ' + t(index ? categoryIconLabels[index - 1] : 'Umum'), category ? catalogIcon(category) : categoryIcons[0])).join('');
   modal(category ? t('Edit kategori') : t('Tambah kategori'),
     input('name', 'Nama kategori', category ? categoryName(category) : '') +
-    select('group', 'Kelompok (opsional)', option(':general', t('Tanpa kelompok khusus'), currentGroup || ':general') +
-      groups.map(item => option(item.id, groupName(item), currentGroup)).join('')) +
+    select('icon', 'Ikon', icons) +
+    input('examples', 'Contoh (opsional)', category ? categoryExamples(category) : '', 180, false) +
+    (customGroups.length ? select('group', 'Kelompok (opsional)', option(':general', t('Tanpa kelompok khusus'), currentGroup) +
+      customGroups.map(item => option(item.id, groupName(item), currentGroup)).join('')) : '') +
     (category ? check('archived', 'Arsipkan kategori', category.archived) : ''), async data => {
     await commit(draft => {
-      const selected = data.get('group');
-      let destination = draft.groups.find(item => item.id === selected);
-      if (selected === ':general') {
-        destination = draft.groups.find(item => item.id === group?.id && general(item)) || draft.groups.find(general);
-      }
-      if (selected === ':general' && !destination) {
-        destination = { id: draft.groups.some(item => item.id === 'other') ? 'general-' + id() : 'other',
-          name: 'Lainnya', color: palettes[2], categories: [] };
-        draft.groups.push(destination);
-      }
-      if (!destination) throw new Error('Kelompok tidak ditemukan.');
+      const selected = data.get('group') || ':general';
       const previous = draft.groups.find(item => item.id === group?.id);
+      const original = previous?.categories.find(item => item.id === category?.id);
+      const destination = selected === ':general'
+        ? previous && isDefaultGroup(previous) && !previous.archived ? previous : generalGroup(draft.groups)
+        : draft.groups.find(item => item.id === selected);
+      if (!destination) throw new Error('Kelompok tidak ditemukan.');
       const name = data.get('name').trim();
-      const value = { id: category?.id || id(), name: category && name === categoryName(category) ? category.name : name,
+      const examples = data.get('examples').trim();
+      const value = { ...original, id: category?.id || id(),
+        name: category && name === categoryName(category) ? original?.name || category.name : name,
+        icon: data.get('icon'),
+        examples: category && examples === categoryExamples(category) ? original?.examples ?? examples : examples,
         archived: data.has('archived') };
+      if (original && value.name !== original.name) value.aliases = [];
       if (previous && previous !== destination) previous.categories = previous.categories.filter(item => item.id !== value.id);
       upsert(destination.categories, value);
     }, 'Kategori disimpan.');
