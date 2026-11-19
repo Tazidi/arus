@@ -65,6 +65,22 @@ function monthlyDue(start, offset) {
   return month.toISOString().slice(0, 8) + String(Math.min(month.getUTCDate(), Number(start.slice(-2)))).padStart(2, '0');
 }
 
+export function billMonthIndex(item, period) {
+  if (typeof period !== 'string' || !validDate(period + '-01')) return -1;
+  const [year, month] = period.split('-').map(Number);
+  const [firstYear, firstMonth] = item.firstDue.split('-').map(Number);
+  const offset = (year - firstYear) * 12 + month - firstMonth;
+  return offset >= 0 && (item.duration === undefined || offset < item.duration) ? offset : -1;
+}
+
+export function billPeriodAt(item, offset) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || (item.duration !== undefined && offset >= item.duration)) return;
+  const due = monthlyDue(item.firstDue, offset);
+  if (!due) return;
+  const month = due.slice(0, 7);
+  return { due, month, amount: item.monthlyAmounts?.[month] ?? item.amount };
+}
+
 export function obligationProgress(item, payments) {
   const paid = payments.reduce((sum, tx) => sum + tx.amount, 0);
   if (item.kind === 'loan') {
@@ -74,16 +90,17 @@ export function obligationProgress(item, payments) {
   }
   const covered = new Set(payments.map(tx => tx.dueMonth));
   let offset = 0;
-  let due = item.firstDue;
-  while (due && covered.has(due.slice(0, 7))) due = monthlyDue(item.firstDue, ++offset);
-  return { paid, due, amount: item.amount };
+  let period = billPeriodAt(item, offset);
+  while (period && covered.has(period.month)) period = billPeriodAt(item, ++offset);
+  return { paid, due: period?.due || '', amount: period?.amount ?? 0,
+    remainingPeriods: item.duration === undefined ? undefined : item.duration - covered.size };
 }
 
 export function recordObligationPayment(state, planId, dueMonth, payment) {
   const item = (state.obligations || []).find(plan => plan.id === planId);
   if (!item || item.archived) throw new Error('Jadwal pembayaran sudah tidak aktif.');
   const progress = obligationProgress(item, state.transactions.filter(tx => tx.obligation === planId));
-  if (item.kind === 'bill' && progress.due.slice(0, 7) !== dueMonth) {
+  if (item.kind === 'bill' && (!progress.due || progress.due.slice(0, 7) !== dueMonth)) {
     throw new Error('Periode tagihan sudah berubah. Buka formulir pembayaran lagi.');
   }
   if (item.kind === 'loan' && payment.amount > progress.remaining) {
@@ -91,7 +108,7 @@ export function recordObligationPayment(state, planId, dueMonth, payment) {
   }
   state.transactions.push({
     ...payment, type: 'expense', obligation: planId,
-    ...(item.kind === 'bill' && { dueMonth }),
+    ...(item.kind === 'bill' && { dueMonth, scheduledAmount: progress.amount }),
   });
 }
 
@@ -123,6 +140,12 @@ export function validate(state) {
     if (!validName(item.name) || !['loan', 'bill'].includes(item.kind) || !validDate(item.firstDue) ||
       !integer(item.amount) || item.amount <= 0 || typeof item.archived !== 'boolean' ||
       (item.kind === 'loan' && (!integer(item.balance) || item.balance <= 0))) fail();
+    if (item.duration !== undefined && (item.kind !== 'bill' || !Number.isSafeInteger(item.duration) ||
+      item.duration < 1 || !billPeriodAt(item, item.duration - 1))) fail();
+    if (item.monthlyAmounts !== undefined && (item.kind !== 'bill' || !item.monthlyAmounts ||
+      typeof item.monthlyAmounts !== 'object' || Array.isArray(item.monthlyAmounts) ||
+      Object.entries(item.monthlyAmounts).some(([period, amount]) =>
+        billMonthIndex(item, period) < 0 || !integer(amount) || amount <= 0))) fail();
   }
   const paidPeriods = new Map();
   const loanTotals = new Map();
@@ -134,19 +157,19 @@ export function validate(state) {
       (tx.needsCategory !== undefined && (tx.needsCategory !== true || tx.type !== 'expense' || tx.category !== '' || !tx.note.trim())) ||
       (tx.type === 'expense' && !tx.needsCategory && !categoryIds.has(tx.category)) ||
       (tx.type === 'transfer' && (!accounts.has(tx.to) || tx.to === tx.account))) fail();
-    if (tx.obligation === undefined && tx.dueMonth === undefined) continue;
+    if (tx.obligation === undefined && tx.dueMonth === undefined && tx.scheduledAmount === undefined) continue;
     const plan = plans.get(tx.obligation);
     if (!plan || tx.type !== 'expense') fail();
     if (plan.kind === 'bill') {
       const period = tx.dueMonth;
-      if (typeof period !== 'string' || !validDate(period + '-01') || period < plan.firstDue.slice(0, 7)) fail();
+      if (billMonthIndex(plan, period) < 0 || (tx.scheduledAmount !== undefined && (!integer(tx.scheduledAmount) || tx.scheduledAmount <= 0))) fail();
       const periods = paidPeriods.get(plan.id) || new Set();
       if (periods.has(period)) fail();
       periods.add(period);
       paidPeriods.set(plan.id, periods);
     } else {
       const total = (loanTotals.get(plan.id) || 0) + tx.amount;
-      if (tx.dueMonth !== undefined || total > plan.balance) fail();
+      if (tx.dueMonth !== undefined || tx.scheduledAmount !== undefined || total > plan.balance) fail();
       loanTotals.set(plan.id, total);
     }
   }

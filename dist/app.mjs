@@ -1,10 +1,10 @@
 import { categoryName, groupName, language, locale, setPreference, t, theme } from './preferences.mjs';
 import { config } from './config.mjs';
-import { categories, categoryReviewFilter, initial, obligationProgress, today, types, validate } from './ledger.mjs';
+import { billMonthIndex, billPeriodAt, categories, categoryReviewFilter, initial, obligationProgress, today, types, validate } from './ledger.mjs';
 import { cloudReady, collections, currentSession, finishLogin, hasChanges, load, login, logout, merge, requireAccount, save, sync, telegram } from './storage.mjs';
 import { backup, csv, download, parseBackup, xlsx } from './exports.mjs';
-import { accountsPage, categoriesPage, dashboard, esc, icon, monthLabel, obligationsPage, option, periodControl, table } from './views.mjs';
-import { accountForm, categoryForm, dialog, groupForm, modal, obligationForm, obligationPaymentForm, transactionForm } from './forms.mjs';
+import { accountsPage, billScheduleBody, billSchedulePageSize, categoriesPage, dashboard, esc, icon, monthLabel, obligationsPage, option, periodControl, table } from './views.mjs';
+import { accountForm, billAmountForm, categoryForm, dialog, groupForm, modal, obligationForm, obligationPaymentForm, transactionForm } from './forms.mjs';
 import { createDriveActions } from './drive.mjs';
 
 const $ = selector => document.querySelector(selector);
@@ -308,6 +308,21 @@ const handlers = {
     }
     const progress = obligationProgress(item, state.transactions.filter(tx => tx.obligation === item.id));
     if (item.kind === 'loan' ? progress.remaining > 0 : progress.due) obligationPaymentForm(state, item, progress, commit);
+  },
+  'bill-schedule': button => {
+    const item = lookup(state.obligations || [], button.dataset.id);
+    if (item?.kind !== 'bill') return;
+    const history = state.transactions.filter(tx => tx.obligation === item.id);
+    const due = obligationProgress(item, history).due;
+    const current = billMonthIndex(item, due.slice(0, 7));
+    const offset = button.dataset.offset === undefined ? Math.max(0, Math.floor(current / billSchedulePageSize)) * billSchedulePageSize : Number(button.dataset.offset);
+    if (billPeriodAt(item, offset)) modal(t('Rincian per bulan'), billScheduleBody(item, history, offset), null);
+  },
+  'edit-bill-amount': button => {
+    const item = lookup(state.obligations || [], button.dataset.id);
+    if (item?.kind === 'bill' && !item.archived && billMonthIndex(item, button.dataset.month) >= 0) {
+      billAmountForm(item, button.dataset.month, commit);
+    }
   },
   'obligation-history': button => showTransactions({ obligation: button.dataset.id, all: true }),
   'clear-obligation': () => { delete filters.obligation; render(); $('#query')?.focus(); },

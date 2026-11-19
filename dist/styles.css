@@ -324,3 +324,13 @@ nav a[aria-current=page] { font-weight: 720; }
 }
 
 .category-review { color: var(--amber); font-weight: 650; }
+
+#bill-duration p { margin-top: 5px; font-size: 12px; }
+.bill-periods { display: grid; gap: 7px; }
+.bill-period { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; }
+.bill-period-head { grid-column: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.bill-period-head span { font-size: 12px; }
+.bill-period dl { grid-column: 1; display: flex; flex-wrap: wrap; gap: 7px 20px; margin: 0; }
+.bill-period dt { color: var(--muted); font-size: 12px; }
+.bill-period dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.bill-period button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }

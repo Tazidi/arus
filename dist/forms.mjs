@@ -1,5 +1,5 @@
 import { categoryName, groupName, locale, t } from './preferences.mjs';
-import { accountTypes, categories, formatAmount, id, palettes, parseAmount, providers, recordObligationPayment, today, types, validLogo } from './ledger.mjs';
+import { accountTypes, billMonthIndex, billPeriodAt, categories, formatAmount, id, palettes, parseAmount, providers, recordObligationPayment, today, types, validLogo } from './ledger.mjs';
 import { esc, logo, monthLabel, option } from './views.mjs';
 
 const $ = selector => document.querySelector(selector);
@@ -29,8 +29,8 @@ form.addEventListener('submit', async event => {
 });
 const input = (name, label, value = '', max = 80, required = true) =>
   `<label>${t(label)}<input name="${name}" value="${esc(value)}" maxlength="${max}" ${required ? 'required' : ''}></label>`;
-const amountField = (name, label, value = '', signed = false) =>
-  `<label>${t(label)}<input name="${name}" type="text" inputmode="${signed ? 'text' : 'numeric'}" data-rupiah autocomplete="off" value="${esc(formatAmount(value))}" required></label>`;
+const amountField = (name, label, value = '', signed = false, required = true) =>
+  `<label>${t(label)}<input name="${name}" type="text" inputmode="${signed ? 'text' : 'numeric'}" data-rupiah autocomplete="off" value="${esc(formatAmount(value))}" ${required ? 'required' : ''}></label>`;
 form.addEventListener('input', event => {
   const input = event.target;
   if (!input.hasAttribute('data-rupiah') || event.isComposing) return;
@@ -258,31 +258,50 @@ export function obligationForm(item, commit) {
     ${input('name', 'Nama tagihan atau pinjaman', item?.name)}
     ${amountField('amount', 'Nominal per bulan (Rp)', item?.amount)}
     <label>${t('Jatuh tempo pertama')}<input type="date" name="firstDue" value="${item?.firstDue || today()}" required></label>
+    <div id="bill-duration" class="wide">
+      <label>${t('Durasi (bulan, opsional)')}<input type="number" inputmode="numeric" name="duration" min="1" step="1" value="${item?.duration ?? ''}"></label>
+      <p class="muted">${t('Kosongkan jika tagihan berulang tanpa batas waktu.')}</p>
+    </div>
     <div id="loan-balance" class="wide">
       ${amountField('balance', 'Saldo pinjaman saat mulai dicatat (Rp)', item?.balance)}
       <p class="muted">${t('Masukkan jumlah yang masih harus dibayar, termasuk biaya yang sudah diketahui.')}</p>
     </div>
     ${item ? `<div class="wide">${check('archived', 'Arsipkan jadwal', item.archived)}</div>` : ''}</div>`, async data => {
     const kind = item?.kind || data.get('kind');
+    const duration = data.get('duration');
     const next = {
       id: item?.id || id(), kind, name: data.get('name').trim(),
       firstDue: data.get('firstDue'), amount: parseAmount(data.get('amount')),
       archived: data.has('archived'),
       ...(kind === 'loan' && { balance: parseAmount(data.get('balance')) }),
+      ...(kind === 'bill' && duration && { duration: Number(duration) }),
     };
     await commit(draft => {
       const payments = draft.transactions.filter(tx => tx.obligation === next.id);
       if (kind === 'loan' && payments.reduce((sum, tx) => sum + tx.amount, 0) > next.balance) {
         throw new Error('Saldo awal pinjaman lebih kecil dari pembayaran yang sudah dicatat.');
       }
-      if (kind === 'bill' && payments.some(tx => tx.dueMonth < next.firstDue.slice(0, 7))) {
-        throw new Error('Jatuh tempo pertama melewati periode yang sudah dibayar.');
+      if (kind === 'bill') {
+        if (next.duration !== undefined && !billPeriodAt(next, next.duration - 1)) {
+          throw new Error('Durasi melampaui rentang tanggal yang tersedia.');
+        }
+        if (payments.some(tx => billMonthIndex(next, tx.dueMonth) < 0)) {
+          throw new Error('Jadwal harus mencakup semua periode yang sudah dibayar.');
+        }
+        const current = draft.obligations?.find(plan => plan.id === next.id);
+        const overrides = Object.entries(current?.monthlyAmounts || {});
+        if (overrides.some(([period]) => billMonthIndex(next, period) < 0)) {
+          throw new Error('Hapus nominal khusus di luar jadwal baru sebelum mengubah durasi atau tanggal.');
+        }
+        if (overrides.length) next.monthlyAmounts = Object.fromEntries(overrides);
       }
       upsert(draft.obligations ??= [], next);
     }, 'Jadwal disimpan.');
   });
   const update = () => {
     const loan = (item?.kind || field('kind')?.value) === 'loan';
+    $('#bill-duration').hidden = loan;
+    field('duration').disabled = loan;
     $('#loan-balance').hidden = !loan;
     field('balance').disabled = !loan;
   };
@@ -312,5 +331,25 @@ export function obligationPaymentForm(state, item, progress, commit) {
       salary: data.has('salary'), note: item.name, created: new Date().toISOString(),
     };
     await commit(draft => recordObligationPayment(draft, item.id, dueMonth, payment), 'Pembayaran dicatat.');
+  });
+}
+
+export function billAmountForm(item, period, commit) {
+  modal(t('Ubah nominal periode'), `<p class="muted">${esc(item.name)} · ${monthLabel(period)}</p>
+    <div class="form-grid"><div class="wide">${amountField('amount', 'Nominal (Rp)', item.monthlyAmounts?.[period], false, false)}</div></div>
+    <p class="muted">${t('Kosongkan untuk memakai nominal bulanan bawaan.')}</p>`, async data => {
+    const input = data.get('amount').trim();
+    await commit(draft => {
+      const plan = draft.obligations.find(current => current.id === item.id);
+      if (!plan || plan.archived || billMonthIndex(plan, period) < 0 ||
+        draft.transactions.some(tx => tx.obligation === item.id && tx.dueMonth === period)) {
+        throw new Error('Periode ini sudah dibayar atau tidak lagi tersedia.');
+      }
+      if (input) (plan.monthlyAmounts ??= {})[period] = parseAmount(input);
+      else if (plan.monthlyAmounts) {
+        delete plan.monthlyAmounts[period];
+        if (!Object.keys(plan.monthlyAmounts).length) delete plan.monthlyAmounts;
+      }
+    }, 'Nominal periode disimpan.');
   });
 }

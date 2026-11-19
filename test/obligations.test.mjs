@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { backup, parseBackup } from '../dist/exports.mjs';
 import { balances, initial, obligationProgress, recordObligationPayment, validate } from '../dist/ledger.mjs';
 import { merge } from '../dist/storage.mjs';
+import { billScheduleBody } from '../dist/views.mjs';
 
 const bill = { id: 'internet', kind: 'bill', name: 'Internet', amount: 300000, firstDue: '2028-01-31', archived: false };
 const loan = { id: 'loan', kind: 'loan', name: 'Cicilan', amount: 1000000, balance: 2500000, firstDue: '2028-01-31', archived: false };
@@ -57,4 +58,25 @@ test('legacy data merges with new schedules without losing purchases or allowing
   const concurrent = { ...remote, obligations: [bill] };
   recordObligationPayment(concurrent, bill.id, '2028-01', payment('other-jan', 300000, '2028-01-31'));
   assert.throws(() => merge(base, local, concurrent), error => error.conflict === true);
+});
+
+test('a three-month schedule uses custom amounts, preserves actual payments, and ends after the last month', () => {
+  const plan = { ...bill, duration: 3, monthlyAmounts: { '2028-02': 350000, '2028-03': 270000 } };
+  const state = ledger(plan);
+
+  assert.equal(obligationProgress(plan, state.transactions).remainingPeriods, 3);
+  recordObligationPayment(state, plan.id, '2028-01', payment('first', 300000, '2028-01-31'));
+  assert.equal(obligationProgress(plan, state.transactions).amount, 350000);
+  recordObligationPayment(state, plan.id, '2028-02', payment('second', 360000, '2028-02-21'));
+  assert.equal(obligationProgress(plan, state.transactions).remainingPeriods, 1);
+  assert.match(billScheduleBody(plan, state.transactions, 0), /Februari 2028[\s\S]*?350\.000[\s\S]*?360\.000/);
+  recordObligationPayment(state, plan.id, '2028-03', payment('third', 270000, '2028-03-31'));
+  assert.deepEqual(obligationProgress(plan, state.transactions), { paid: 930000, due: '', amount: 0, remainingPeriods: 0 });
+  assert.throws(() => recordObligationPayment(state, plan.id, '2028-04', payment('outside', 270000, '2028-04-30')), /Periode tagihan/);
+  assert.deepEqual(parseBackup(backup(state)), state);
+
+  const shortened = { ...plan, duration: 2, monthlyAmounts: {} };
+  assert.throws(() => validate({ ...state, obligations: [shortened] }), /Struktur data/);
+  state.transactions.pop();
+  assert.equal(obligationProgress(plan, validate(state).transactions).due, '2028-03-31');
 });

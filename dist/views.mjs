@@ -1,5 +1,5 @@
 import { categoryName, groupName, locale, t } from './preferences.mjs';
-import { accountTypes, balances, categories, categoryReviewFilter, dateLabel, newest, obligationProgress, providers, rupiah, today, totals, types, validLogo } from './ledger.mjs';
+import { accountTypes, balances, billPeriodAt, categories, categoryReviewFilter, dateLabel, newest, obligationProgress, providers, rupiah, today, totals, types, validLogo } from './ledger.mjs';
 
 const paths = {
   bills: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6m-6 4h6m-6 4h3',
@@ -190,7 +190,8 @@ export function obligationsPage(state) {
     left.item.name.localeCompare(right.item.name, locale()));
   const card = ({ item, history, progress }) => {
     const loan = item.kind === 'loan';
-    const settled = loan && progress.remaining === 0;
+    const settled = loan ? progress.remaining === 0 : progress.remainingPeriods === 0;
+    const billAmountLabel = item.duration || (progress.due && progress.amount !== item.amount) ? 'Nominal periode berikutnya' : 'Nominal per bulan';
     const late = !item.archived && progress.due && progress.due < asOf;
     const latest = history.reduce((last, tx) => !last || newest(tx, last) < 0 ? tx : last, null);
     const status = item.archived ? 'Diarsipkan' : settled ? 'Lunas' : late ? 'Lewat jatuh tempo' :
@@ -199,7 +200,8 @@ export function obligationsPage(state) {
       <div class="card-head"><div><p>${t(loan ? 'Pinjaman' : 'Tagihan bulanan')}</p><h2>${esc(item.name)}</h2></div>
       <button class="icon-button" data-action="edit-obligation" data-id="${item.id}" aria-label="${esc(t('Edit {name}', { name: item.name }))}">${icon('edit')}</button></div>
       <dl class="obligation-figures">
-        <div><dt>${t(loan ? 'Sisa pinjaman' : 'Nominal per bulan')}</dt><dd>${rupiah(loan ? progress.remaining : item.amount)}</dd></div>
+        ${loan || !settled ? `<div><dt>${t(loan ? 'Sisa pinjaman' : billAmountLabel)}</dt><dd>${rupiah(loan ? progress.remaining : progress.due ? progress.amount : item.amount)}</dd></div>` : ''}
+        ${progress.remainingPeriods !== undefined ? `<div><dt>${t('Sisa periode')}</dt><dd>${t('{remaining} dari {total} bulan', { remaining: progress.remainingPeriods, total: item.duration })}</dd></div>` : ''}
         ${progress.due && !item.archived ? `<div><dt>${t('Jatuh tempo berikutnya')}</dt><dd class="obligation-date">${dateLabel(progress.due, { day: 'numeric', month: 'short', year: 'numeric' }, locale())}</dd></div>` : ''}
       </dl>
       ${status ? `<span class="obligation-status ${late ? 'overdue' : ''}">${t(status)}</span>` : ''}
@@ -207,6 +209,7 @@ export function obligationsPage(state) {
       ${latest ? `<p class="muted">${t('Terakhir dibayar {amount} · {date}', { amount: rupiah(latest.amount), date: dateLabel(latest.date, undefined, locale()) })}</p>` : ''}
       <div class="inline">
         ${!item.archived && !settled && (loan || progress.due) ? `<button class="secondary" data-action="pay-obligation" data-id="${item.id}">${t('Catat pembayaran')}</button>` : ''}
+        ${!loan ? `<button class="secondary small" data-action="bill-schedule" data-id="${item.id}">${t('Rincian per bulan')}</button>` : ''}
         ${history.length ? `<button class="text-button" data-action="obligation-history" data-id="${item.id}">${t('Riwayat pembayaran')} ${icon('arrow', 14)}</button>` : ''}
       </div>
     </article>`;
@@ -219,4 +222,31 @@ export function obligationsPage(state) {
       `<section class="card">${empty('Belum ada jadwal aktif', 'Tambahkan pinjaman atau tagihan bulanan untuk mulai mencatat.', null, null, 'bills')}</section>`}
     ${archived.length ? `<details class="card group-manager"><summary>${t('Jadwal diarsipkan')}</summary>
       <div class="group-controls obligations-grid">${archived.map(card).join('')}</div></details>` : ''}`;
+}
+
+export const billSchedulePageSize = 12;
+
+export function billScheduleBody(item, history, offset) {
+  const byMonth = new Map(history.map(tx => [tx.dueMonth, tx]));
+  const periods = Array.from({ length: billSchedulePageSize }, (_, index) => billPeriodAt(item, offset + index)).filter(Boolean);
+  const controls = (next, label) => `<button type="button" class="secondary small" data-action="bill-schedule"
+    data-id="${item.id}" data-offset="${next}">${t(label)}</button>`;
+  return `<p class="muted">${esc(item.name)}</p>
+    <div class="bill-periods">${periods.map(period => {
+      const payment = byMonth.get(period.month);
+      const title = monthLabel(period.month);
+      return `<section class="bill-period">
+        <div class="bill-period-head"><strong>${title}</strong><span class="muted">${dateLabel(period.due, undefined, locale())}</span></div>
+        <dl>
+          <div><dt>${t('Rencana')}</dt><dd>${rupiah(payment?.scheduledAmount ?? period.amount)}</dd></div>
+          <div><dt>${t('Dibayar')}</dt><dd>${payment ? rupiah(payment.amount) : '—'}</dd></div>
+        </dl>
+        ${!payment && !item.archived ? `<button type="button" class="icon-button" data-action="edit-bill-amount"
+          data-id="${item.id}" data-month="${period.month}" aria-label="${esc(t('Ubah nominal {month}', { month: title }))}">${icon('edit', 16)}</button>` : ''}
+      </section>`;
+    }).join('')}</div>
+    ${offset || billPeriodAt(item, offset + billSchedulePageSize) ? `<div class="inline">
+      ${offset ? controls(Math.max(0, offset - billSchedulePageSize), 'Sebelumnya') : ''}
+      ${billPeriodAt(item, offset + billSchedulePageSize) ? controls(offset + billSchedulePageSize, 'Berikutnya') : ''}
+    </div>` : ''}`;
 }
