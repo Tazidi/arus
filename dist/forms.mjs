@@ -1,6 +1,6 @@
 import { catalogIcon, categoryIconLabels, categoryIcons, generalGroup, isDefaultGroup } from './category-catalog.mjs';
 import { categoryExamples, categoryName, groupName, locale, t } from './preferences.mjs';
-import { accountTypes, billMonthIndex, billPeriodAt, categories, formatAmount, id, palettes, parseAmount, providers, recordObligationPayment, today, types, validLogo } from './ledger.mjs';
+import { accountTypes, balances, billMonthIndex, billPeriodAt, categories, dateLabel, formatAmount, id, palettes, parseAmount, providers, recordBalanceAdjustment, recordObligationPayment, rupiah, today, types, validLogo } from './ledger.mjs';
 import { esc, logo, monthLabel, option } from './views.mjs';
 
 const $ = selector => document.querySelector(selector);
@@ -55,7 +55,7 @@ function upsert(items, value) {
   else items[index] = value;
 }
 export function transactionForm(state, tx, commit) {
-  const typeOptions = Object.entries(types).map(([key, label]) => option(key, t(label), tx?.type || 'expense')).join('');
+  const typeOptions = Object.entries(types).filter(([key]) => key !== 'adjustment').map(([key, label]) => option(key, t(label), tx?.type || 'expense')).join('');
   const accounts = state.accounts.map(item => option(item.id, item.name, tx?.account)).join('');
   modal(tx ? t('Edit transaksi') : t('Tambah transaksi'), `<div class="form-grid">${select('type', 'Jenis', typeOptions)}
     ${amountField('amount', 'Nominal (Rp)', tx?.amount)}
@@ -144,7 +144,7 @@ export function accountForm(account, commit) {
     <label id="provider-field">${t('Penyedia')}<select name="provider"></select></label>
     <div class="wide" id="custom-provider-field" hidden>${input('customProvider', 'Nama penyedia', account?.customProvider)}</div>
     ${input('name', 'Nama rekening', account?.name)}
-    ${amountField('opening', 'Saldo awal (Rp)', account?.opening ?? 0, true)}
+    ${account ? '' : amountField('opening', 'Saldo awal (Rp)', 0, true)}
     <div class="wide provider-field">
       <span id="provider-logo" aria-label="${t('Pratinjau logo')}"></span>
       <label>${t('Logo kustom')}<input type="file" name="logoFile" accept="image/png,image/jpeg,image/webp"><small>${t('PNG, JPG, atau WebP · Maks. 5 MB')}</small></label>
@@ -155,7 +155,7 @@ export function accountForm(account, commit) {
     const customProvider = selected === 'custom' ? data.get('customProvider').trim() : '';
     if (selected === 'custom' && !customProvider) throw new Error('Masukkan nama penyedia.');
     const value = { id: account?.id || id(), name: data.get('name').trim(), type: data.get('accountType'),
-      provider: selected && selected !== 'custom' ? selected : '', opening: parseAmount(data.get('opening'), -1e12),
+      provider: selected && selected !== 'custom' ? selected : '', opening: account?.opening ?? parseAmount(data.get('opening'), -1e12),
       savings: data.has('savings'), ...(customProvider && { customProvider }), ...(customLogo && { logo: customLogo }) };
     await commit(draft => upsert(draft.accounts, value), 'Rekening disimpan.');
   });
@@ -326,11 +326,45 @@ export function obligationForm(item, commit) {
   update();
 }
 
+export function balanceAdjustmentForm(state, account, commit) {
+  const date = today();
+  const current = balances(state, date)[account.id];
+  modal(t('Edit saldo'), `<div class="form-grid">
+    <p class="wide"><strong>${esc(account.name)}</strong><br>${t('Saldo saat ini: {amount}', { amount: rupiah(current) })}</p>
+    <div class="wide">${amountField('balance', 'Saldo baru (Rp)', current, true)}</div>
+    <p class="wide muted" id="adjustment-preview" role="status"></p>
+    </div>`, async data => {
+    const target = parseAmount(data.get('balance'), -1e12);
+    await commit(draft => recordBalanceAdjustment(draft, account.id, target, current, date),
+      target === current ? 'Saldo sudah sesuai.' : 'Saldo diperbarui.');
+  }, t('Simpan saldo'));
+  const balance = field('balance');
+  const preview = $('#adjustment-preview');
+  const update = () => {
+    try {
+      const difference = parseAmount(balance.value, -1e12) - current;
+      const amount = (difference > 0 ? '+' : '') + rupiah(difference);
+      preview.textContent = difference ? t('Selisih yang dicatat: {amount}', { amount }) : t('Saldo yang sama tidak membuat transaksi baru.');
+    } catch { preview.textContent = ''; }
+  };
+  balance.addEventListener('input', update);
+  update();
+  balance.select();
+}
+
+export function balanceAdjustmentDetails(tx, account) {
+  const amount = (tx.amount > 0 ? '+' : '') + rupiah(tx.amount);
+  modal(t('Penyesuaian saldo'), `<p><strong>${esc(account?.name)}</strong> · ${dateLabel(tx.date, undefined, locale())}</p>
+    <p>${t('Selisih yang dicatat: {amount}', { amount })}</p>`, null, undefined,
+  `<button type="button" class="danger" data-action="remove-transaction" data-id="${tx.id}">${t('Hapus')}</button>`);
+}
+
 export function obligationPaymentForm(state, item, progress, commit) {
   const dueMonth = item.kind === 'bill' ? progress.due.slice(0, 7) : undefined;
   const available = categories(state).filter(category => !category.archived && !category.group.archived)
     .sort((left, right) => categoryName(left).localeCompare(categoryName(right), locale()));
-  const accountOptions = option('', t('Pilih rekening')) + state.accounts.map(account => option(account.id, account.name)).join('');
+  const defaultAccount = state.accounts.length === 1 ? state.accounts[0].id : '';
+  const accountOptions = option('', t('Pilih rekening'), defaultAccount) + state.accounts.map(account => option(account.id, account.name, defaultAccount)).join('');
   const defaultCategory = available.find(category => category.id === 'bills')?.id;
   const categoryOptions = option('', t('Pilih kategori')) + available
     .map(category => option(category.id, categoryName(category), defaultCategory)).join('');
@@ -338,8 +372,9 @@ export function obligationPaymentForm(state, item, progress, commit) {
     <div class="form-grid">
       ${amountField('amount', 'Nominal (Rp)', progress.amount)}
       <label>${t('Tanggal pembayaran')}<input type="date" name="date" value="${today()}" max="${today()}" required></label>
-      ${select('account', 'Rekening', accountOptions)}
+      ${select('account', 'Bayar dari rekening', accountOptions)}
       ${select('category', 'Kategori pengeluaran', categoryOptions)}
+      <p class="wide muted" id="payment-balance" role="status" hidden></p>
       <div class="wide">${check('salary', 'Pengeluaran ini dari gaji', false)}</div>
     </div>`, async data => {
     const payment = {
@@ -349,6 +384,20 @@ export function obligationPaymentForm(state, item, progress, commit) {
     };
     await commit(draft => recordObligationPayment(draft, item.id, dueMonth, payment), 'Pembayaran dicatat.');
   });
+  const current = balances(state);
+  const account = field('account');
+  const amount = field('amount');
+  const preview = $('#payment-balance');
+  const update = () => {
+    try {
+      const value = parseAmount(amount.value);
+      preview.hidden = !account.value;
+      preview.textContent = account.value ? t('Perkiraan saldo setelah pembayaran: {amount}', { amount: rupiah(current[account.value] - value) }) : '';
+    } catch { preview.hidden = true; preview.textContent = ''; }
+  };
+  account.addEventListener('change', update);
+  amount.addEventListener('input', update);
+  update();
 }
 
 export function billAmountForm(item, period, commit) {

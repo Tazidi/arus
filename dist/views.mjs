@@ -50,8 +50,9 @@ export function table(state, list, limit = 0) {
     const account = accountMap.get(tx.account);
     const reviewLabel = tx.needsCategory ? t('Perlu kategori') : '';
     const accountLabel = esc(account?.name) + (tx.type === 'transfer' ? ' → ' + esc(accountMap.get(tx.to)?.name) : '');
-    const label = tx.note || (category ? categoryName(category) : '') || (tx.salary && tx.type === 'income' ? t('Gaji') : t(types[tx.type]));
-    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${reviewLabel ? ' · ' + reviewLabel : category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><span aria-hidden="true">${esc(catalogIcon(category))}</span>${esc(categoryName(category))}</span>` : reviewLabel ? `<span class="category-review">${reviewLabel}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t('Edit {name}', { name: label }))}">${icon('edit', 16)}</button></td></tr>`;
+    const adjustment = tx.type === 'adjustment';
+    const label = adjustment ? t('Penyesuaian saldo') : tx.note || (category ? categoryName(category) : '') || (tx.salary && tx.type === 'income' ? t('Gaji') : t(types[tx.type]));
+    return `<tr><td><div class="table-name"><span class="tx-icon ${tx.type}">${icon(adjustment ? 'settings' : tx.type === 'transfer' ? 'transactions' : tx.type, 17)}</span><div><strong>${esc(label)}</strong><small>${dateLabel(tx.date, undefined, locale())}<span class="tx-mobile-meta"> · ${accountLabel}${reviewLabel ? ' · ' + reviewLabel : category && tx.note ? ' · ' + esc(categoryName(category)) : ''}</span></small></div></div></td><td class="tx-desktop-meta">${category ? `<span class="category-label"><span aria-hidden="true">${esc(catalogIcon(category))}</span>${esc(categoryName(category))}</span>` : reviewLabel ? `<span class="category-review">${reviewLabel}</span>` : esc(t(types[tx.type]))}</td><td class="tx-desktop-meta">${accountLabel}</td><td class="amount ${tx.type}">${tx.type === 'income' || (adjustment && tx.amount > 0) ? '+' : tx.type === 'expense' ? '−' : ''}${rupiah(tx.amount)}</td><td><button class="icon-button" data-action="edit-transaction" data-id="${tx.id}" aria-label="${esc(t(adjustment ? 'Lihat {name}' : 'Edit {name}', { name: label }))}">${icon(adjustment ? 'arrow' : 'edit', 16)}</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -155,7 +156,7 @@ export function dashboard(state, list, month, view) {
 export function accountsPage(state) {
   const current = balances(state);
   return `<div class="page-intro"><div><h1>${t('Rekening')}</h1><p>${t('Kelola bank, e-wallet, dan uang tunai dalam satu tempat.')}</p></div><button class="secondary" data-action="add-account">＋ ${t('Tambah rekening')}</button></div>
-    ${state.accounts.length ? `<div class="accounts-grid">${state.accounts.map(account => `<section class="card account-card"><div class="account-head">${logo(account)}<button class="icon-button" data-action="edit-account" data-id="${account.id}" aria-label="${esc(t('Edit {name}', { name: account.name }))}">${icon('edit')}</button></div><h2>${esc(account.name)}</h2><p>${t(accountTypes[account.type])}${account.customProvider ? ' · ' + esc(account.customProvider) : ''}${account.savings ? ' · ' + t('Tabungan') : ''}</p><strong>${rupiah(current[account.id])}</strong><button class="text-button" data-action="account-transactions" data-id="${account.id}">${t('Lihat transaksi')} ${icon('arrow', 16)}</button></section>`).join('')}</div>` : `<section class="card">${empty('Tambahkan rekening pertama', 'Masukkan saldo sebelum transaksi pertama.', 'add-account', 'Tambah rekening', 'accounts')}</section>`}`;
+    ${state.accounts.length ? `<div class="accounts-grid">${state.accounts.map(account => `<section class="card account-card"><div class="account-head">${logo(account)}<button class="icon-button" data-action="edit-account" data-id="${account.id}" aria-label="${esc(t('Edit {name}', { name: account.name }))}">${icon('edit')}</button></div><h2>${esc(account.name)}</h2><p>${t(accountTypes[account.type])}${account.customProvider ? ' · ' + esc(account.customProvider) : ''}${account.savings ? ' · ' + t('Tabungan') : ''}</p><strong>${rupiah(current[account.id])}</strong><div class="inline"><button class="secondary small" data-action="adjust-balance" data-id="${account.id}">${t('Edit saldo')}</button><button class="text-button" data-action="account-transactions" data-id="${account.id}">${t('Lihat transaksi')} ${icon('arrow', 16)}</button></div></section>`).join('')}</div>` : `<section class="card">${empty('Tambahkan rekening pertama', 'Masukkan saldo sebelum transaksi pertama.', 'add-account', 'Tambah rekening', 'accounts')}</section>`}`;
 }
 
 export function categoriesPage(state, selectedGroup, manageGroups) {
@@ -179,6 +180,7 @@ export function categoriesPage(state, selectedGroup, manageGroups) {
 
 export function obligationsPage(state) {
   const asOf = today();
+  const accountNames = new Map(state.accounts.map(account => [account.id, account.name]));
   const payments = new Map();
   for (const tx of state.transactions) {
     if (!tx.obligation) continue;
@@ -208,7 +210,7 @@ export function obligationsPage(state) {
       </dl>
       ${status ? `<span class="obligation-status ${late ? 'overdue' : ''}">${t(status)}</span>` : ''}
       ${loan && !settled && !item.archived && progress.amount !== item.amount ? `<p class="muted">${t('Sisa cicilan ini {amount}', { amount: rupiah(progress.amount) })}</p>` : ''}
-      ${latest ? `<p class="muted">${t('Terakhir dibayar {amount} · {date}', { amount: rupiah(latest.amount), date: dateLabel(latest.date, undefined, locale()) })}</p>` : ''}
+      ${latest ? `<p class="muted">${t('Terakhir dibayar {amount} · {date}', { amount: rupiah(latest.amount), date: dateLabel(latest.date, undefined, locale()) })} · ${esc(accountNames.get(latest.account))}</p>` : ''}
       <div class="inline">
         ${!item.archived && !settled && (loan || progress.due) ? `<button class="secondary" data-action="pay-obligation" data-id="${item.id}">${t('Catat pembayaran')}</button>` : ''}
         ${!loan ? `<button class="secondary small" data-action="bill-schedule" data-id="${item.id}">${t('Rincian per bulan')}</button>` : ''}

@@ -7,8 +7,9 @@ const origins = (Deno.env.get('ARUS_ORIGINS') || '').split(',').map(value => val
 
 type Account = { id: string; name: string; provider?: string; customProvider?: string; type: string; opening: number; savings?: boolean };
 type Category = { id: string; name: string; archived?: boolean; icon?: string; aliases?: string[] };
-type Group = { id?: string; name?: string; archived?: boolean; categories: Category[] };
-type Transaction = { type: 'income' | 'expense' | 'transfer'; date: string; amount: number; account: string;
+type Group = { archived?: boolean; categories: Category[] };
+type EntryType = 'income' | 'expense' | 'transfer';
+type Transaction = { type: EntryType | 'adjustment'; date: string; amount: number; account: string;
   to?: string; salary?: boolean };
 type Ledger = { state: { accounts: Account[]; groups: Group[]; transactions: Transaction[] } };
 type Message = { chat: { type: string; id: number }; text?: string; message_id: number;
@@ -70,7 +71,8 @@ const parseAmount = (amount: string) => {
   return Number.isSafeInteger(value) && value >= 1 && value <= 1e12 ? value : 0;
 };
 const activeCategories = (state: Ledger['state']) =>
-  state.groups.filter(group => !group.archived).flatMap(group => group.categories).filter(category => !category.archived);
+  state.groups.filter(group => !group.archived).flatMap(group => group.categories)
+    .filter(category => !category.archived && !['kebutuhan', 'keinginan'].includes(normalize(category.name)));
 
 function findAccount(input: string, available: Account[]) {
   const name = normalize(input);
@@ -115,7 +117,7 @@ function classifyCategory(input: string, categories: Category[]) {
   return { suggested: aliases.length === 1 ? aliases[0] : undefined };
 }
 
-type Details = { type: Transaction['type']; account: Account; amount: number; category?: Category; suggested?: Category; note?: string; to?: Account; salary?: boolean };
+type Details = { type: EntryType; account: Account; amount: number; category?: Category; suggested?: Category; note?: string; to?: Account; salary?: boolean };
 function transactionDetails(input: string, state: Ledger['state'], original: string): Details | undefined {
   const income = /^(pemasukan|gaji) (.+)$/u.exec(input);
   if (income) {
@@ -169,7 +171,7 @@ function balanceReport(state: Ledger['state'], today: string) {
   const balances = new Map(state.accounts.map(account => [account.id, account.opening]));
   for (const tx of state.transactions) {
     if (tx.date > today || !balances.has(tx.account)) continue;
-    balances.set(tx.account, balances.get(tx.account)! + (tx.type === 'income' ? tx.amount : -tx.amount));
+    balances.set(tx.account, balances.get(tx.account)! + (tx.type === 'income' || tx.type === 'adjustment' ? tx.amount : -tx.amount));
     if (tx.type === 'transfer' && tx.to && balances.has(tx.to)) balances.set(tx.to, balances.get(tx.to)! + tx.amount);
   }
   const total = Array.from(balances.values()).reduce((sum, amount) => sum + amount, 0);
@@ -193,7 +195,7 @@ function monthReport(state: Ledger['state'], today: string) {
 }
 
 type CategoryOption = { id: string; label: string; suggested?: true };
-type PreviewDraft = { type: Transaction['type']; salary: boolean; needsCategory?: boolean; categoryOptions?: CategoryOption[] };
+type PreviewDraft = { type: EntryType; salary: boolean; needsCategory?: boolean; categoryOptions?: CategoryOption[] };
 const categoryPageSize = 8;
 const pendingButtons = (updateId: string) => [
   [{ text: 'Simpan untuk ditinjau', callback_data: 'review:' + updateId }],
@@ -282,7 +284,7 @@ async function handleCallback(query: Callback, revision: string) {
 }
 type FlowStage = 'category' | 'amount' | 'account' | 'destination' | 'preview';
 type Flow = {
-  id: string; revision: string; stage: FlowStage; type: Transaction['type']; salary: boolean;
+  id: string; revision: string; stage: FlowStage; type: EntryType; salary: boolean;
   options?: CategoryOption[]; category?: string; note?: string; amount?: number; account?: string; to?: string;
 };
 type FlowRow = { transaction_data: Flow; expires_at: string };
@@ -325,16 +327,17 @@ async function cancelFlow(chat: string, flow: Flow) {
 function categoryOptions(state: Ledger['state'], suggested?: Category): CategoryOption[] {
   const active = activeCategories(state);
   const duplicates = new Map<string, number>();
+  const seen = new Map<string, number>();
   for (const item of active) duplicates.set(normalize(item.name), (duplicates.get(normalize(item.name)) || 0) + 1);
-  return state.groups.filter(group => !group.archived).flatMap(group =>
-    group.categories.filter(item => !item.archived).map(item => {
-      const builtIn = (group.id === 'needs' && group.name === 'Kebutuhan') || (group.id === 'wants' && group.name === 'Keinginan') ||
-        ((group.id === 'other' || group.id?.startsWith('general-')) && group.name === 'Lainnya');
-      const groupLabel = group.name && (duplicates.get(normalize(item.name)) || 0) > 1 ?
-        ' · ' + (builtIn ? 'Kategori bawaan' : group.name) : '';
-      const label = (item.icon ? item.icon + ' ' : '') + item.name + groupLabel;
-      return { id: item.id, label: label.slice(0, 80), ...(item.id === suggested?.id && { suggested: true as const }) };
-    })).sort((left, right) => Number(!!right.suggested) - Number(!!left.suggested));
+  return active.map(item => {
+    const name = normalize(item.name);
+    const count = (seen.get(name) || 0) + 1;
+    seen.set(name, count);
+    const suffix = (duplicates.get(name) || 0) > 1 ? ' (' + count + ')' : '';
+    const title = (item.icon ? item.icon + ' ' : '') + item.name;
+    return { id: item.id, label: title.slice(0, 80 - suffix.length) + suffix,
+      ...(item.id === suggested?.id && { suggested: true as const }) };
+  }).sort((left, right) => Number(!!right.suggested) - Number(!!left.suggested));
 }
 const accountOptions = (accounts: Account[]) => accounts.map(account => ({ id: account.id, label: account.name }));
 const flowData = (flow: Flow, verb: string, index = 0) => ['flow', flow.id, flow.stage, verb, index].join(':');

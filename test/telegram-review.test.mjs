@@ -181,6 +181,21 @@ test('Telegram confirms known or unknown purchases and leaves ambiguous entries 
     await message(++callbackUpdateId, '12500');
     assert.equal(drafts.at(-1).transaction_data.note, 'jajan');
     assert.equal(drafts.at(-1).transaction_data.category, 'food');
+
+    state.groups.push(
+      { name: 'Kebutuhan', categories: [{ id: 'legacy-need', name: 'Kebutuhan' }, { id: 'office', name: 'Kantor' }] },
+      { name: 'Keinginan', categories: [{ id: 'legacy-want', name: 'Keinginan' }, { id: 'media', name: 'Kantor' }] },
+    );
+    await message(++callbackUpdateId, 'Servis sepatu tunai 12k');
+    const available = drafts.at(-1).transaction_data.categoryOptions;
+    assert.deepEqual(available.filter(option => option.label.startsWith('Kantor')).map(option => option.label),
+      ['Kantor (1)', 'Kantor (2)']);
+    assert.ok(available.every(option => !/kebutuhan|keinginan/i.test(option.label)));
+
+    state.transactions.push({ id: 'adj-up', type: 'adjustment', date: '2025-01-01', amount: 15000, account: 'cash' },
+      { id: 'adj-down', type: 'adjustment', date: '2025-01-01', amount: -5000, account: 'cash' });
+    await message(++callbackUpdateId, '/saldo');
+    assert.match(sent.at(-1).text, /Rp\s110\.000/);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousDeno === undefined) delete globalThis.Deno;

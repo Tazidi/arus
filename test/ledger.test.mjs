@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { backup, csv, parseBackup, xlsx } from '../dist/exports.mjs';
-import { balances, formatAmount, initial, parseAmount, totals, validate } from '../dist/ledger.mjs';
+import { balances, recordBalanceAdjustment, formatAmount, initial, parseAmount, totals, validate } from '../dist/ledger.mjs';
 import { hasChanges, merge } from '../dist/storage.mjs';
 
 const account = (id, opening, savings = false) => ({ id, name: id, opening, savings, type: 'cash', provider: '' });
@@ -81,4 +81,39 @@ test('exports literal notes and packages three worksheets', async () => {
   assert.match(entries.get('xl/workbook.xml'), /Ringkasan.*Rekening.*Transaksi/);
   assert.match(entries.get('xl/worksheets/sheet3.xml'), /<v>8000000<\/v>/);
   assert.match(entries.get('xl/worksheets/sheet3.xml'), /=HYPERLINK\(&quot;example&quot;\)/);
+});
+
+test('setting a current balance records the signed difference without changing opening balance or cash flow', () => {
+  const state = sample();
+  const date = '2028-01-31';
+  const before = balances(state, date).cash;
+  const baseline = totals(state.transactions);
+  recordBalanceAdjustment(state, 'cash', 250000, before, date);
+  assert.equal(state.transactions.at(-1).note, 'Penyesuaian saldo');
+  assert.equal(state.transactions.at(-1).amount, 250000 - before);
+  assert.equal(state.transactions.at(-1).type, 'adjustment');
+  assert.equal(balances(state, date).cash, 250000);
+  assert.equal(state.accounts[0].opening, 0);
+
+  assert.throws(() => recordBalanceAdjustment(state, 'cash', 125000, before, date), /Saldo berubah/);
+  recordBalanceAdjustment(state, 'cash', 125000, 250000, date);
+  assert.equal(state.transactions.at(-1).amount, -125000);
+  const count = state.transactions.length;
+  recordBalanceAdjustment(state, 'cash', 125000, 125000, date);
+  assert.equal(state.transactions.length, count);
+  assert.equal(balances(state, date).cash, 125000);
+  assert.deepEqual(totals(state.transactions), baseline);
+  assert.deepEqual(parseBackup(backup(state)), state);
+});
+
+test('concurrent corrections to the same balance use conflict resolution rather than adding both differences', () => {
+  const base = sample();
+  const date = '2028-01-31';
+  const current = balances(base, date).cash;
+  const local = structuredClone(base);
+  const remote = structuredClone(base);
+  recordBalanceAdjustment(local, 'cash', 50000, current, date);
+  recordBalanceAdjustment(remote, 'cash', 60000, current, date);
+  assert.throws(() => merge(base, local, remote), error => error.conflict === true);
+  assert.equal(balances(merge(base, local, remote, true), date).cash, 50000);
 });

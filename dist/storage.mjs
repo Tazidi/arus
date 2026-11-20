@@ -130,22 +130,33 @@ function canonical(value) {
 }
 const same = (left, right) => canonical(left) === canonical(right);
 export const hasChanges = record => !same(record.state, record.base);
+
+function mergeConflict() {
+  const error = new Error('Perubahan pada data yang sama ditemukan di perangkat lain. Buka Pengaturan untuk menyelesaikannya.');
+  error.conflict = true;
+  return error;
+}
 export function merge(base, local, remote, preferLocal = false) {
   const merged = {};
   for (const collection of collections) {
     const before = new Map((base[collection] ?? []).map(item => [item.id, item]));
     const here = new Map((local[collection] ?? []).map(item => [item.id, item]));
     const there = new Map((remote[collection] ?? []).map(item => [item.id, item]));
+    if (collection === 'transactions') {
+      const adjustedLocally = new Set([...here.values()].filter(tx => tx.type === 'adjustment' && !before.has(tx.id) && !there.has(tx.id))
+        .map(tx => tx.account));
+      for (const tx of there.values()) {
+        if (tx.type !== 'adjustment' || before.has(tx.id) || here.has(tx.id) || !adjustedLocally.has(tx.account)) continue;
+        if (!preferLocal) throw mergeConflict();
+        there.delete(tx.id);
+      }
+    }
     for (const key of new Set([...before.keys(), ...here.keys()])) {
       const original = before.get(key);
       const next = here.get(key);
       const latest = there.get(key);
       if (same(original, next)) continue;
-      if (!preferLocal && !same(original, latest) && !same(next, latest)) {
-        const error = new Error('Perubahan pada data yang sama ditemukan di perangkat lain. Buka Pengaturan untuk menyelesaikannya.');
-        error.conflict = true;
-        throw error;
-      }
+      if (!preferLocal && !same(original, latest) && !same(next, latest)) throw mergeConflict();
       if (next) there.set(key, next);
       else there.delete(key);
     }

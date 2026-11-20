@@ -39,7 +39,7 @@ export const initial = () => ({
 });
 
 export const palettes = ['#63e6bd', '#9d91ff', '#ffc578', '#66bafe', '#f397af', '#a8db77'];
-export const types = { income: 'Pemasukan', expense: 'Pengeluaran', transfer: 'Transfer' };
+export const types = { income: 'Pemasukan', expense: 'Pengeluaran', transfer: 'Transfer', adjustment: 'Penyesuaian saldo' };
 export const accountTypes = { bank: 'Bank', wallet: 'E-wallet', cash: 'Tunai' };
 export const categoryReviewFilter = ':review';
 export const categories = state => state.groups.flatMap(group => group.categories.map(category => ({ ...category, group })));
@@ -146,7 +146,10 @@ export function validate(state) {
   const paidPeriods = new Map();
   const loanTotals = new Map();
   for (const tx of state.transactions) {
-    if (!Object.hasOwn(types, tx.type) || !integer(tx.amount) || tx.amount <= 0 ||
+    const adjustment = tx.type === 'adjustment';
+    const validAmount = adjustment ? Number.isSafeInteger(tx.amount) && tx.amount !== 0 : integer(tx.amount) && tx.amount > 0;
+    if (!Object.hasOwn(types, tx.type) || !validAmount ||
+      (adjustment && (tx.category || tx.to || tx.salary)) ||
       !validDate(tx.date) ||
       typeof tx.created !== 'string' || !Number.isFinite(Date.parse(tx.created)) ||
       !accounts.has(tx.account) || typeof tx.note !== 'string' || tx.note.length > 160 ||
@@ -176,16 +179,27 @@ export function balances(state, through = today()) {
   const values = Object.fromEntries(state.accounts.map(account => [account.id, account.opening]));
   for (const tx of state.transactions) {
     if (tx.date > through) continue;
-    values[tx.account] += tx.type === 'income' ? tx.amount : -tx.amount;
+    values[tx.account] += tx.type === 'income' || tx.type === 'adjustment' ? tx.amount : -tx.amount;
     if (tx.type === 'transfer') values[tx.to] += tx.amount;
   }
   return values;
 }
 
+export function recordBalanceAdjustment(state, account, target, expected, date = today()) {
+  if (!integer(target)) throw new Error('Masukkan nominal rupiah bulat yang valid.');
+  if (!state.accounts.some(item => item.id === account)) throw new Error('Rekening tidak ditemukan.');
+  const current = balances(state, date)[account];
+  if (current !== expected) throw new Error('Saldo berubah. Buka kembali formulir untuk melihat saldo terbaru.');
+  const amount = target - current;
+  if (!amount) return;
+  state.transactions.push({ id: id(), type: 'adjustment', account, amount, date,
+    created: new Date().toISOString(), note: 'Penyesuaian saldo' });
+}
+
 export function totals(list) {
   const result = { income: 0, expense: 0, salary: 0, salaryExpense: 0 };
   for (const tx of list) {
-    if (tx.type === 'transfer') continue;
+    if (tx.type !== 'income' && tx.type !== 'expense') continue;
     result[tx.type] += tx.amount;
     if (tx.salary && tx.type === 'income') result.salary += tx.amount;
     if (tx.salary && tx.type === 'expense') result.salaryExpense += tx.amount;

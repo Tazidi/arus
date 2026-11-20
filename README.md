@@ -11,7 +11,8 @@ Arus adalah aplikasi pencatatan keuangan pribadi dalam rupiah. Masuk dengan Goog
 - Pilih kategori pengeluaran dengan ikon dan contoh, seperti **Makan & Minum** atau **Transportasi**. Tambahkan kategori sendiri, termasuk ikon dan contoh opsional, lewat menu **Kategori**.
 - Pilih tema **Sistem**, **Gelap**, atau **Terang** dan bahasa **Indonesia** atau **Inggris** di **Pengaturan → Tampilan**.
 - Lihat total saldo, sisa gaji, dan grafik arus kas mingguan untuk bulan terpilih atau bulanan untuk tahun terpilih. Klik grafik untuk melihat transaksi yang terkait.
-- Catat pinjaman dan tagihan bulanan di menu **Tagihan**. Lihat sisa pinjaman, jatuh tempo, dan riwayat pembayaran. Untuk tagihan dengan jangka waktu tertentu, isi durasi dan atur nominal tiap bulan di **Rincian per bulan**. Pembayaran yang dicatat masuk ke transaksi pengeluaran.
+- Catat pinjaman dan tagihan bulanan di menu **Tagihan**. Lihat sisa pinjaman, jatuh tempo, dan riwayat pembayaran. Untuk tagihan dengan jangka waktu tertentu, isi durasi dan atur nominal tiap bulan di **Rincian per bulan**. Pembayaran yang dicatat masuk ke transaksi pengeluaran dan mengurangi saldo rekening yang dipilih.
+- Gunakan **Rekening → Edit saldo** untuk mencatat selisih sebagai penyesuaian saldo. Penyesuaian muncul di riwayat transaksi dan tidak dihitung sebagai pemasukan atau pengeluaran.
 - Sinkronkan data lewat Supabase. Aplikasi dapat membuka salinan data akun saat offline setelah login dan sinkronisasi pertama.
 - Ekspor transaksi ke Excel atau CSV. Unduh backup JSON, atau simpan dan pulihkan backup melalui Google Drive.
 - Catat transaksi, cek saldo, dan lihat ringkasan bulanan dari menu bot Telegram.

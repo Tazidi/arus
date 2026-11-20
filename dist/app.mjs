@@ -5,7 +5,7 @@ import { billMonthIndex, billPeriodAt, categories, categoryReviewFilter, initial
 import { cloudReady, collections, currentSession, finishLogin, hasChanges, load, login, logout, merge, requireAccount, save, sync, telegram } from './storage.mjs';
 import { backup, csv, download, parseBackup, xlsx } from './exports.mjs';
 import { accountsPage, billScheduleBody, billSchedulePageSize, categoriesPage, dashboard, esc, icon, monthLabel, obligationsPage, option, periodControl, table } from './views.mjs';
-import { accountForm, billAmountForm, categoryForm, dialog, groupForm, modal, obligationForm, obligationPaymentForm, transactionForm } from './forms.mjs';
+import { accountForm, balanceAdjustmentDetails, balanceAdjustmentForm, billAmountForm, categoryForm, dialog, groupForm, modal, obligationForm, obligationPaymentForm, transactionForm } from './forms.mjs';
 import { createDriveActions } from './drive.mjs';
 
 const $ = selector => document.querySelector(selector);
@@ -88,18 +88,19 @@ async function synchronize(strategy) {
     }
   }
 }
-async function commit(change, message) {
+async function commit(change, message, useLatest = false) {
   if (!session) throw new Error('Masuk dengan Google untuk menyimpan data.');
   const userId = session.user.id;
   const key = scope();
-  const before = state;
-  const draft = structuredClone(before);
-  change(draft);
-  validate(draft);
+  const snapshot = state;
   await serialized(async () => {
     await requireAccount(userId);
     const latest = (await load(key)) || record;
-    const updated = merge(before, draft, latest.state);
+    const before = useLatest ? latest.state : snapshot;
+    const draft = structuredClone(before);
+    change(draft);
+    validate(draft);
+    const updated = useLatest ? draft : merge(before, draft, latest.state);
     const next = { ...latest, state: updated };
     await save(key, next);
     state = updated;
@@ -115,8 +116,8 @@ function transactions() {
   const accountNames = new Map(state.accounts.map(item => [item.id, item.name]));
   const search = filters.query?.toLocaleLowerCase(locale()) || '';
   return (filters.all ? state.transactions : monthList()).filter(tx =>
-    (!filters.type || (filters.type === 'salary' ? tx.salary && tx.type !== 'transfer'
-      : filters.type === 'cashflow' ? tx.type !== 'transfer' : filters.type === tx.type)) &&
+    (!filters.type || (filters.type === 'salary' ? tx.salary && (tx.type === 'income' || tx.type === 'expense')
+      : filters.type === 'cashflow' ? tx.type === 'income' || tx.type === 'expense' : filters.type === tx.type)) &&
     (!filters.account || tx.account === filters.account || tx.to === filters.account) &&
     (!filters.category || (filters.category === categoryReviewFilter ? tx.needsCategory : tx.category === filters.category)) &&
     (!filters.obligation || tx.obligation === filters.obligation) &&
@@ -279,6 +280,7 @@ function chartUpdate(button, update, selector) {
   $(selector || '[data-action="' + button.dataset.action + '"][data-id="' + button.dataset.id + '"]')?.focus();
 }
 function editTransaction(tx) {
+  if (tx?.type === 'adjustment') return balanceAdjustmentDetails(tx, lookup(state.accounts, tx.account));
   if (!state.accounts.length) {
     notify(t('Tambahkan rekening sebelum mencatat transaksi.'));
     return accountForm(undefined, commit);
@@ -330,6 +332,10 @@ const handlers = {
   'clear-obligation': () => { delete filters.obligation; render(); $('#query')?.focus(); },
   'add-account': () => accountForm(undefined, commit),
   'edit-account': button => accountForm(lookup(state.accounts, button.dataset.id), commit),
+  'adjust-balance': button => {
+    const account = lookup(state.accounts, button.dataset.id);
+    if (account) balanceAdjustmentForm(state, account, (change, message) => commit(change, message, true));
+  },
   'add-group': () => groupForm(undefined, commit),
   'edit-group': button => groupForm(lookup(state.groups, button.dataset.id), commit),
   'add-category': () => categoryForm(state, null, undefined, commit, categoryGroup),

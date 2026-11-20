@@ -29,6 +29,13 @@ test('monthly bills keep their due day, use shorter months correctly, and reopen
   assert.equal(obligationProgress(bill, state.transactions).due, '2028-01-31');
 });
 
+test('a recorded payment reduces only the account selected to pay the bill', () => {
+  const state = ledger(bill);
+  state.accounts.push({ id: 'bank', name: 'Bank', type: 'bank', opening: 500000, savings: false });
+  recordObligationPayment(state, bill.id, '2028-01', { ...payment('bank-pay', 300000, '2028-01-30'), account: 'bank' });
+  assert.deepEqual(balances(validate(state), '2028-01-30'), { cash: 4000000, bank: 200000 });
+});
+
 test('partial and extra loan payments update the next installment and retain linked expenses', () => {
   const state = ledger(loan);
   recordObligationPayment(state, loan.id, undefined, payment('part', 600000, '2028-01-30'));
